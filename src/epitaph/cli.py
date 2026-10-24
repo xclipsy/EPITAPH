@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__, pipeline, requirements, safety, suggestions
 from .analyzers import analyze
 from .config import Config
-from .errors import EpitaphError, LLMUnavailable
+from .errors import ConfigError, EpitaphError, LLMUnavailable
 from .llm.hardware import (
     detect as detect_hardware,
 )
@@ -117,16 +117,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "init":
-        root = (
-            Path(args.path).expanduser().resolve()
-            if args.path is not None
-            else Path.cwd().resolve()
-        )
-    else:
-        root = _resolve_root(args.path)
-
     try:
+        if args.command == "init":
+            root = (
+                Path(args.path).expanduser().resolve()
+                if args.path is not None
+                else Path.cwd().resolve()
+            )
+        else:
+            root = _resolve_root(args.path)
+
         if args.command in (None, "chat"):
             config = _require_config(root)
             if (code := _ensure_llm(config, command="epitaph")) is not None:
@@ -292,14 +292,15 @@ def _resolve_root(path_arg: str | None) -> Path:
     cwd = Path.cwd().resolve()
     cfg_file = cwd / ".epitaph" / "config.toml"
     if cfg_file.exists():
-        try:
-            c = Config.load_or_default(cwd)
-            if c.project.target_path:
-                tp = Path(c.project.target_path).expanduser().resolve()
-                if tp.exists() and tp.is_dir():
-                    return tp
-        except Exception:
-            pass
+        c = Config.load(cwd)
+        if c.project.target_path:
+            tp = Path(c.project.target_path).expanduser().resolve()
+            if not tp.is_dir():
+                raise ConfigError(
+                    f"La carpeta de trabajo configurada ya no existe: {tp}",
+                    hint="ejecuta `uv run epitaph init` o indica otra ruta con `-C`",
+                )
+            return tp
         return cwd
 
     return cwd

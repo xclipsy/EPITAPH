@@ -513,9 +513,18 @@ class ChatSession:
             error_panel(f"La ruta '{target}' no existe o no es un directorio.", "verifica la ruta")
             return
 
+        try:
+            config = Config.load(target)
+        except EpitaphError as exc:
+            error_panel(
+                f"No se puede cambiar a un workspace sin configurar: {exc.message}",
+                f"ejecuta `uv run epitaph -C \"{target}\" init` antes de cambiarlo",
+            )
+            return
+
         set_active_workspace(target)
         self.root = target
-        self.config = Config.load_or_default(target)
+        self.config = config
         self.state = State.load(target)
         self.store = PreferenceStore.for_root(
             self.root,

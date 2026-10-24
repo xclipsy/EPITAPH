@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from epitaph import cli
 from epitaph.config import Config
+from epitaph.errors import ConfigError
 from epitaph.llm.provider_ollama import OllamaProvider
 
 
@@ -164,6 +167,34 @@ def test_default_command_requests_init_when_project_is_not_configured(
     error = capsys.readouterr().out
     assert "EPITAPH no está configurado" in error
     assert "uv run epitaph init" in error
+
+
+def test_active_workspace_write_errors_are_reported(tmp_path: Path, monkeypatch) -> None:
+    from epitaph import fs
+
+    def fail_write(*args) -> None:
+        raise OSError("denied")
+
+    monkeypatch.setattr(fs, "get_global_workspace_file", lambda: tmp_path / "active.txt")
+    monkeypatch.setattr(fs, "atomic_write", fail_write)
+
+    with pytest.raises(ConfigError, match="No se pudo guardar el workspace activo"):
+        fs.set_active_workspace(tmp_path)
+
+
+def test_missing_active_workspace_reports_recovery_action(tmp_path: Path, monkeypatch) -> None:
+    from epitaph.fs import get_active_workspace
+
+    marker_dir = tmp_path / ".epitaph"
+    marker_dir.mkdir()
+    (marker_dir / "active_workspace.txt").write_text(
+        str(tmp_path / "deleted-project"), encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ConfigError, match="workspace activo ya no existe") as error:
+        get_active_workspace()
+    assert "uv run epitaph init" in error.value.hint
 
 
 def test_init_wizard_autosave_option(tmp_path: Path, monkeypatch) -> None:

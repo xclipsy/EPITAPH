@@ -83,3 +83,20 @@ def test_view_and_citation_shortcuts(sample_repo: Path, capsys) -> None:
     assert "1" in session.citation_shortcuts
     assert session.handle("1") is True
     assert "main.py" in capsys.readouterr().out
+
+
+def test_workspace_rejects_unconfigured_target_without_switching(
+    sample_repo: Path, tmp_path: Path, monkeypatch
+) -> None:
+    from epitaph.ui import chat
+
+    target = tmp_path / "unconfigured"
+    target.mkdir()
+    session = _session(sample_repo)
+    errors: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(chat, "error_panel", lambda message, hint=None: errors.append((message, hint)))
+
+    assert session.handle(f"/workspace {target}") is True
+    assert session.root == sample_repo.resolve()
+    assert errors and "sin configurar" in errors[0][0]
+    assert str(target) in (errors[0][1] or "")
