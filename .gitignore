@@ -13,10 +13,7 @@ build/
 htmlcov/
 
 # EPITAPH
-.epitaph/cache.db
-.epitaph/lock
-.epitaph/audit.log
-.epitaph/backups/
+.epitaph/
 suggestions.md
 requirements.suggested.txt
 README.suggested.md

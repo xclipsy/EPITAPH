@@ -1012,6 +1012,16 @@ Cadena: modelo del rol → modelo global → cualquier instalado compatible → 
 | `llama_cpp` | v0.3 | Gramática GBNF, útil sin Ollama |
 | `openai_compatible` | Opcional | Solo si `base_url` es explícito; aviso de privacidad |
 
+### 14.9 Preflight y bloqueo
+
+Antes de ejecutar comandos que requieren modelo (`chat`, `update`, `docs`, `watch`, `bench`,
+`models list|pull`), EPITAPH consulta `/api/tags`. Si el servicio no responde o no hay
+modelos, muestra un panel estructurado con estado, endpoint, comando, modelo, causa y pasos
+(`ollama serve`, `ollama pull`, `epitaph doctor`), y sale con código `3`.
+
+No se bloquean `--no-llm`, `doctor`, `analyze`, `requirements`, `suggestions`, `prefs`,
+`structure`, `undo` ni los cambios locales de rol (`models use|role`).
+
 ---
 
 ## 15. Gestión de `requirements.txt`
@@ -1737,12 +1747,25 @@ flowchart TB
 
 ### 25.2 Mensajes
 
-Formato: `qué falló` + `por qué` + `qué hacer`.
+Formato: `qué falló` + `por qué` + `qué hacer`. En terminal, los errores de preflight se
+muestran como panel estructurado (estado, endpoint, comando, modelo, causa y pasos).
 
 ```
-✖ No se pudo conectar con Ollama en http://localhost:11434
-  Causa: conexión rechazada.
-  Acción: ejecuta `ollama serve` o configura [llm].base_url en .epitaph/config.toml
+╭─ ERROR · OLLAMA NO DISPONIBLE ─────────────────────────────╮
+│ estado    SERVIDOR NO DETECTADO                            │
+│ endpoint  http://localhost:11434                           │
+│ comando   epitaph update                                   │
+│ modelo    qwen2.5-coder:3b                                 │
+│ causa     no se pudo conectar con /api/tags                │
+│                                                            │
+│ Solución                                                   │
+│ 1. ollama serve                                            │
+│ 2. ollama pull qwen2.5-coder:3b                            │
+│ 3. epitaph doctor                                          │
+│                                                            │
+│ Alternativa determinista                                   │
+│   epitaph update --no-llm                                  │
+╰────────────────────────────────────────────────────────────╯
 ```
 
 ### 25.3 Logs

@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__, pipeline, requirements, safety, suggestions
 from .analyzers import analyze
 from .config import Config
-from .errors import EpitaphError
+from .errors import EpitaphError, LLMUnavailable
 from .llm.hardware import (
     detect as detect_hardware,
 )
@@ -20,6 +20,7 @@ from .llm.hardware import (
     estimate_tokens_per_second,
     viable,
 )
+from .llm.health import probe
 from .llm.provider_ollama import OllamaProvider
 from .llm.roles import installed_names
 from .preferences import PreferenceStore, build, detect, resolve, validate
@@ -29,8 +30,9 @@ from .scheduler.watcher import Watcher
 from .scheduler.worker import Worker
 from .state import State
 from .ui import banner
+from .ui.notices import doctor_table, ollama_notice
 from .ui.tables import facts_panel, models_table
-from .ui.theme import SECONDARY, SUCCESS, console, use_rich
+from .ui.theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command in (None, "chat"):
             config = _require_config(root)
+            if (code := _ensure_llm(config, command="epitaph")) is not None:
+                return code
             state = State.load(root)
             from .ui.chat import ChatSession
 
@@ -133,6 +137,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command in ("update", "docs"):
             config = _require_config(root)
+            if (
+                code := _ensure_llm(
+                    config,
+                    command=f"epitaph {args.command}",
+                    no_llm=args.no_llm,
+                )
+            ) is not None:
+                return code
             state = State.load(root)
             provider = None if args.no_llm else OllamaProvider(config.llm.base_url)
             result = pipeline.update(
@@ -228,6 +240,29 @@ def _require_config(root: Path) -> Config:
     return Config.load(root)
 
 
+def _ensure_llm(
+    config: Config,
+    *,
+    command: str,
+    no_llm: bool = False,
+    require_models: bool = True,
+    deterministic: str | None = "epitaph update --no-llm",
+) -> int | None:
+    """Bloquea comandos que necesitan Ollama si el servicio no está listo."""
+    if no_llm:
+        return None
+    health = probe(OllamaProvider(config.llm.base_url))
+    if health.reachable and (health.models or not require_models):
+        return None
+    ollama_notice(
+        health,
+        command=command,
+        model=config.llm.roles.writer,
+        deterministic=deterministic,
+    )
+    return LLMUnavailable.exit_code
+
+
 def _print(text: str) -> None:
     if use_rich():
         console().print(text)
@@ -316,6 +351,17 @@ def _models(root: Path, args) -> int:
     provider = OllamaProvider(config.llm.base_url)
     hw = detect_hardware()
 
+    if args.action in ("list", "pull"):
+        if (
+            code := _ensure_llm(
+                config,
+                command=f"epitaph models {args.action}",
+                require_models=False,
+                deterministic=None,
+            )
+        ) is not None:
+            return code
+
     if args.action == "pull":
         if not args.value:
             _print("Uso: epitaph models pull <modelo>")
@@ -359,10 +405,9 @@ def _models(root: Path, args) -> int:
 
 def _bench(root: Path, args) -> int:
     config = _require_config(root)
+    if (code := _ensure_llm(config, command="epitaph bench", deterministic=None)) is not None:
+        return code
     provider = OllamaProvider(config.llm.base_url)
-    if not provider.is_available():
-        _print("Ollama no está disponible.")
-        return 3
     models = installed_names(provider.list_models())
     model = args.model or config.llm.roles.writer
     if model not in models:
@@ -395,21 +440,45 @@ def _doctor(root: Path) -> int:
 
     config = Config.load_or_default(root)
     hw = detect_hardware()
-    provider = OllamaProvider(config.llm.base_url)
-    _print(f"epitaph       {__version__}")
-    _print(f"python        {platform.python_version()}")
-    _print(f"sistema       {hw.system} {hw.machine} · {hw.cpu_count} hilos")
-    _print(f"memoria       {hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)")
-    _print(f"gpu           {hw.gpu or 'no detectada'}")
-    _print(f"ollama        {'conectado' if provider.is_available() else 'no disponible'}")
-    if provider.is_available():
-        try:
-            _print(f"modelos       {', '.join(installed_names(provider.list_models())) or 'ninguno'}")
-        except EpitaphError:
-            pass
+    health = probe(OllamaProvider(config.llm.base_url))
     clean, _ = safety.status(root)
-    _print(f"git           {'limpio' if clean else 'con cambios'}")
-    _print(f"config        {Config.path_for(root)}")
+
+    ok = f"[bold {SUCCESS}]OK[/bold {SUCCESS}]"
+    bad = f"[bold {PRIMARY}]NO DISPONIBLE[/bold {PRIMARY}]"
+    rows = [
+        ("epitaph", ok, __version__),
+        ("python", ok, platform.python_version()),
+        ("sistema", ok, f"{hw.system} {hw.machine} · {hw.cpu_count} hilos"),
+        ("memoria", ok, f"{hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)"),
+        (
+            "gpu",
+            f"[bold {SUCCESS}]DETECTADA[/bold {SUCCESS}]"
+            if hw.gpu
+            else f"[{SECONDARY}]SIN GPU[/{SECONDARY}]",
+            hw.gpu or "inferencia en CPU",
+        ),
+        (
+            "ollama",
+            f"[bold {SUCCESS}]CONECTADO[/bold {SUCCESS}]" if health.reachable else bad,
+            health.base_url,
+        ),
+        (
+            "modelos",
+            f"[bold {SUCCESS}]{len(health.models)}[/bold {SUCCESS}]"
+            if health.models
+            else f"[bold {PRIMARY}]NINGUNO[/bold {PRIMARY}]",
+            ", ".join(health.models) or f"ollama pull {config.llm.roles.writer}",
+        ),
+        (
+            "git",
+            f"[bold {SUCCESS}]LIMPIO[/bold {SUCCESS}]"
+            if clean
+            else f"[bold {PRIMARY}]CON CAMBIOS[/bold {PRIMARY}]",
+            "árbol de trabajo",
+        ),
+        ("config", ok, str(Config.path_for(root))),
+    ]
+    doctor_table(rows)
     return 0
 
 
@@ -432,6 +501,8 @@ def _undo(root: Path, args) -> int:
 
 def _watch(root: Path, args) -> int:
     config = _require_config(root)
+    if (code := _ensure_llm(config, command="epitaph watch")) is not None:
+        return code
     state = State.load(root)
     spec = parse_spec(config.trigger_for("readme"))
     trigger = Trigger(

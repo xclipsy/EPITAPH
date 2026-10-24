@@ -1,7 +1,7 @@
 # EPITAPH — Documentación viva, local y no destructiva
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B%20%7C%203.14-blue.svg?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-85%2F85%20Passing-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-95%2F95%20Passing-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![Local-first](https://img.shields.io/badge/Local--first-Ollama%20%2F%20llama.cpp-98D979.svg)](https://ollama.com)
 [![License](https://img.shields.io/badge/License-MIT-F23078.svg)](LICENSE)
 
@@ -83,9 +83,14 @@ epitaph update --no-llm
 Para añadir prosa generada, instala Ollama y un modelo de código:
 
 ```bash
+ollama serve
 ollama pull qwen2.5-coder:3b
 epitaph doctor
 ```
+
+Si `ollama serve` no está corriendo, los comandos que necesitan modelo (`chat`, `update`,
+`watch`, `bench`, `models list|pull`) se bloquean con un panel de diagnóstico y código de
+salida `3`. Los comandos deterministas y `--no-llm` siguen funcionando.
 
 ---
 
@@ -129,6 +134,8 @@ epitaph doctor
 - Selección de modelo por rol con `epitaph models role` o desde el chat.
 - Detección de hardware (hilos, RAM, GPU) y estimación de viabilidad del modelo.
 - Registro local de ejecuciones y métricas de tokens en `.epitaph/cache.db`.
+- **Preflight**: si `ollama serve` no responde, los comandos con LLM se bloquean con un panel
+  de diagnóstico; `doctor` y `--no-llm` siguen disponibles.
 - El modelo **nunca escribe archivos ni ejecuta comandos**: devuelve JSON validado.
 
 | Rol | Modelo por defecto | Uso |
@@ -230,7 +237,7 @@ EPITAPH/
 │   ├── pipeline.py         # Análisis → prosa → merge → escritura segura
 │   └── cli.py              # Comandos de terminal
 │
-├── tests/                  # 85 tests deterministas (sin Ollama ni red)
+├── tests/                  # 95 tests deterministas (sin Ollama ni red)
 ├── documentation/
 │   ├── EPITAPH_DOCUMENTO_TECNICO.md
 │   └── adr/                # ADR-0001 … ADR-0011
@@ -378,8 +385,8 @@ uv run ruff check .
 ```
 
 ```text
-85 tests collected
-85 passed
+95 tests collected
+95 passed
 All checks passed!
 ```
 
@@ -395,6 +402,7 @@ Criterios que cubren los tests:
 - El guard de git ignora `.epitaph/` y las salidas generadas.
 - Preferencias: propuesta, validación, persistencia y límites.
 - Cadencias, dependencias y análisis de lenguajes.
+- Preflight de Ollama: bloqueo de comandos con modelo y escape con `--no-llm`.
 
 ---
 

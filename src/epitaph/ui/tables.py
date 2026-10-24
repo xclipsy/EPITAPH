@@ -7,7 +7,20 @@ from .theme import DEEP, PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     if not models:
-        print("No hay modelos instalados. Usa `epitaph models pull qwen2.5-coder:3b`.")
+        if use_rich():
+            from rich.panel import Panel
+
+            console().print(
+                Panel(
+                    f"[{SECONDARY}]No hay modelos instalados en Ollama.[/{SECONDARY}]\n"
+                    f"[bold {SUCCESS}]epitaph models pull qwen2.5-coder:3b[/bold {SUCCESS}]",
+                    title=f"[bold {PRIMARY}]SIN MODELOS LOCALES[/bold {PRIMARY}]",
+                    border_style=PRIMARY,
+                    expand=False,
+                )
+            )
+        else:
+            print("No hay modelos instalados. Usa `epitaph models pull qwen2.5-coder:3b`.")
         return
     if not use_rich():
         for model in models:

@@ -23,6 +23,10 @@ Todas las versiones relevantes de EPITAPH. Formato basado en
   vida.
 - Permisos, backups, `undo`, auditoría append-only y guarda de git limpio.
 - `doctor`, `bench`, `analyze`, `watch` y `--dry`.
+- Preflight de Ollama: los comandos que requieren modelo se bloquean con un
+  panel de diagnóstico si `ollama serve` no responde; `--no-llm` mantiene el
+  camino determinista.
+- Diagnóstico `doctor` en tabla estructurada.
 - Quick start end-to-end en el README.
 
 ### Corregido

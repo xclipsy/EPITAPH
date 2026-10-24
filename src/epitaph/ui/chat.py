@@ -6,11 +6,12 @@ import difflib
 import sys
 from pathlib import Path
 
-from .. import pipeline, requirements, safety, suggestions
+from .. import __version__, pipeline, requirements, safety, suggestions
 from ..analyzers import analyze
 from ..config import Config, dumps
 from ..errors import EpitaphError
 from ..llm.hardware import detect as detect_hardware
+from ..llm.health import probe
 from ..llm.prompts import build_question_messages
 from ..llm.provider_ollama import OllamaProvider
 from ..llm.roles import installed_names, resolve_model
@@ -27,6 +28,7 @@ from ..preferences.apply import directives_text
 from ..scheduler.trigger import parse_spec
 from ..state import State
 from . import banner
+from .notices import doctor_table, ollama_hint, ollama_notice
 from .tables import facts_panel, models_table
 from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
@@ -298,6 +300,15 @@ class ChatSession:
 
     def _models(self) -> None:
         hw = detect_hardware()
+        health = probe(self.provider)
+        if not health.reachable:
+            ollama_notice(
+                health,
+                command="/models",
+                model=self.config.llm.roles.writer,
+                deterministic="epitaph update --no-llm",
+            )
+            return
         try:
             models = self.provider.list_models()
         except EpitaphError as exc:
@@ -403,21 +414,45 @@ class ChatSession:
         import platform
 
         hw = detect_hardware()
-        self._print(f"  python        {platform.python_version()}")
-        self._print(f"  sistema       {hw.system} {hw.machine} · {hw.cpu_count} hilos")
-        self._print(f"  memoria       {hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)")
-        self._print(f"  gpu           {hw.gpu or 'no detectada'}")
-        available = self.provider.is_available()
-        self._print(f"  ollama        {'conectado' if available else 'no disponible'}")
-        if available:
-            try:
-                models = installed_names(self.provider.list_models())
-                self._print(f"  modelos       {', '.join(models) or 'ninguno'}")
-            except EpitaphError:
-                pass
+        health = probe(self.provider)
         clean, _ = safety.status(self.root)
-        self._print(f"  git           {'limpio' if clean else 'con cambios'}")
-        self._print(f"  config        {Config.path_for(self.root)}")
+        ok = f"[bold {SUCCESS}]OK[/bold {SUCCESS}]"
+        rows = [
+            ("epitaph", ok, __version__),
+            ("python", ok, platform.python_version()),
+            ("sistema", ok, f"{hw.system} {hw.machine} · {hw.cpu_count} hilos"),
+            ("memoria", ok, f"{hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)"),
+            (
+                "gpu",
+                f"[bold {SUCCESS}]DETECTADA[/bold {SUCCESS}]"
+                if hw.gpu
+                else f"[{SECONDARY}]SIN GPU[/{SECONDARY}]",
+                hw.gpu or "inferencia en CPU",
+            ),
+            (
+                "ollama",
+                f"[bold {SUCCESS}]CONECTADO[/bold {SUCCESS}]"
+                if health.reachable
+                else f"[bold {PRIMARY}]NO DISPONIBLE[/bold {PRIMARY}]",
+                health.base_url,
+            ),
+            (
+                "modelos",
+                f"[bold {SUCCESS}]{len(health.models)}[/bold {SUCCESS}]"
+                if health.models
+                else f"[bold {PRIMARY}]NINGUNO[/bold {PRIMARY}]",
+                ", ".join(health.models) or f"ollama pull {self.config.llm.roles.writer}",
+            ),
+            (
+                "git",
+                f"[bold {SUCCESS}]LIMPIO[/bold {SUCCESS}]"
+                if clean
+                else f"[bold {PRIMARY}]CON CAMBIOS[/bold {PRIMARY}]",
+                "árbol de trabajo",
+            ),
+            ("config", ok, str(Config.path_for(self.root))),
+        ]
+        doctor_table(rows)
 
     # ------------------------------------------------------------- natural
 
@@ -427,22 +462,26 @@ class ChatSession:
             if self._propose(line):
                 return True
 
-        if self.provider.is_available():
-            try:
-                facts = analyze(self.root)
-                models = installed_names(self.provider.list_models())
-                model = resolve_model("chat", self.config, models)
-                answer = self.provider.chat(
-                    model,
-                    build_question_messages(line, facts),
-                    num_ctx=self.config.llm.params.num_ctx,
-                    num_predict=250,
-                    temperature=0.2,
-                )
-                self._print(answer.strip())
-                return True
-            except EpitaphError:
-                pass
+        health = probe(self.provider)
+        if not health.ready:
+            ollama_hint(health, model=self.config.llm.roles.chat)
+            return True
+
+        try:
+            facts = analyze(self.root)
+            models = installed_names(self.provider.list_models())
+            model = resolve_model("chat", self.config, models)
+            answer = self.provider.chat(
+                model,
+                build_question_messages(line, facts),
+                num_ctx=self.config.llm.params.num_ctx,
+                num_predict=250,
+                temperature=0.2,
+            )
+            self._print(answer.strip())
+            return True
+        except EpitaphError as exc:
+            self._print(exc.render())
 
         self._print(
             "No entendí esa petición. Usa /help, o formula una preferencia "
