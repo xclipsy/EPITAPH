@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -126,7 +127,14 @@ class Scanner:
         return False
 
     def rel(self, path: Path) -> str:
-        return path.resolve().relative_to(self.root).as_posix()
+        """Ruta relativa al proyecto sin ``resolve()`` por archivo (coste alto en Windows)."""
+        candidate = Path(path)
+        if not candidate.is_absolute():
+            candidate = self.root / candidate
+        relative = os.path.relpath(candidate, self.root)
+        if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+            raise ValueError(f"fuera del proyecto: {path}")
+        return Path(relative).as_posix()
 
     # ------------------------------------------------------------------- API
 
@@ -153,25 +161,40 @@ class Scanner:
             return True
         return False
 
+    def _walk(self) -> Iterator[tuple[Path, list[str], list[str]]]:
+        """Recorre el árbol podando directorios ignorados (nunca entra en .venv)."""
+        for current, dirs, files in os.walk(self.root):
+            base = Path(current)
+            dirs.sort()
+            files.sort()
+            kept: list[str] = []
+            for name in dirs:
+                child = base / name
+                if child.is_symlink() or self.is_ignored(child, is_dir=True):
+                    continue
+                kept.append(name)
+            dirs[:] = kept
+            yield base, dirs, files
+
     def iter_files(self) -> Iterator[Path]:
         count = 0
-        for path in sorted(self.root.rglob("*")):
-            if path.is_dir() or path.is_symlink():
-                continue
-            if self.is_ignored(path, is_dir=False):
-                continue
-            try:
-                if path.stat().st_size > self.max_bytes:
+        for base, _dirs, files in self._walk():
+            for name in files:
+                path = base / name
+                if path.is_symlink() or self.is_ignored(path, is_dir=False):
                     continue
-            except OSError:
-                continue
-            count += 1
-            if count > self.max_files:
-                self.truncated = True
-                break
-            yield path
+                try:
+                    if path.stat().st_size > self.max_bytes:
+                        continue
+                except OSError:
+                    continue
+                count += 1
+                if count > self.max_files:
+                    self.truncated = True
+                    return
+                yield path
 
     def iter_dirs(self) -> Iterator[Path]:
-        for path in sorted(self.root.rglob("*")):
-            if path.is_dir() and not self.is_ignored(path, is_dir=True):
-                yield path
+        for base, dirs, _files in self._walk():
+            for name in dirs:
+                yield base / name

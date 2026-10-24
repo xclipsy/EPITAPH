@@ -40,6 +40,26 @@ def use_rich() -> bool:
         return False
 
 
+def styled() -> bool:
+    """Rich solo cuando hay terminal real: evita romper al redirigir la salida."""
+    return use_rich() and sys.stdout.isatty()
+
+
+def supports_unicode() -> bool:
+    encoding = (getattr(sys.stdout, "encoding", "") or "").lower()
+    return "utf" in encoding
+
+
+def write(text: str) -> None:
+    """Escribe texto literal (sin markup) tolerando consolas cp1252."""
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:
+        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        sys.stdout.write(text.encode(encoding, "replace").decode(encoding))
+    sys.stdout.flush()
+
+
 def console():
     from rich.console import Console
 

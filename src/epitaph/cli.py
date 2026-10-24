@@ -30,7 +30,7 @@ from .scheduler.worker import Worker
 from .state import State
 from .ui import banner
 from .ui.tables import facts_panel, models_table
-from .ui.theme import SECONDARY, SUCCESS, console, use_rich
+from .ui.theme import SECONDARY, SUCCESS, console, use_rich, write
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -65,6 +65,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze_cmd = sub.add_parser("analyze", help="análisis determinista en JSON")
     analyze_cmd.add_argument("--json", action="store_true")
+
+    describe_cmd = sub.add_parser(
+        "describe", help="lee una carpeta y describe el proyecto (no escribe nada)"
+    )
+    describe_cmd.add_argument("path", nargs="?", default="", help="carpeta a describir")
+    describe_cmd.add_argument("--json", action="store_true", help="salida JSON completa")
+    describe_cmd.add_argument(
+        "--md",
+        "--markdown",
+        dest="markdown",
+        action="store_true",
+        help="README completo en Markdown",
+    )
+    describe_cmd.add_argument("--out", default="", help="guarda el Markdown en un archivo")
+    describe_cmd.add_argument("--model", default="", help="modelo local para la prosa")
+    describe_cmd.add_argument(
+        "--no-llm",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="solo análisis determinista (también válido antes del subcomando)",
+    )
 
     req = sub.add_parser("requirements", help="analiza dependencias")
     req.add_argument("--audit", action="store_true", help="solo reporta")
@@ -130,6 +151,9 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 facts_panel(facts)
             return 0
+
+        if args.command == "describe":
+            return _describe(root, args)
 
         if args.command in ("update", "docs"):
             config = _require_config(root)
@@ -222,6 +246,51 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ------------------------------------------------------------------ helpers
+
+
+def _describe(root: Path, args) -> int:
+    from .describe import describe, render
+
+    target = Path(args.path).expanduser().resolve() if args.path else root
+    if not target.is_dir():
+        _print(f"No es una carpeta válida: {target}")
+        return 2
+
+    config = Config.load_or_default(target)
+    if args.model:
+        config.llm.roles.chat = args.model
+
+    provider: OllamaProvider | None = None
+    if not args.no_llm:
+        candidate = OllamaProvider(config.llm.base_url)
+        if candidate.is_available():
+            provider = candidate
+        else:
+            candidate.close()
+
+    try:
+        description = describe(
+            target,
+            config=config,
+            provider=provider,
+            use_llm=provider is not None,
+        )
+    finally:
+        if provider is not None:
+            provider.close()
+
+    if args.out:
+        output = Path(args.out).expanduser()
+        output.write_text(description.markdown, encoding="utf-8")
+        _print(f"Markdown escrito en {output}")
+
+    if args.json:
+        write(json.dumps(description.to_dict(), ensure_ascii=False, indent=2) + "\n")
+    elif args.markdown:
+        write(description.markdown.rstrip() + "\n")
+    else:
+        render(description)
+    return 0
 
 
 def _require_config(root: Path) -> Config:
@@ -369,12 +438,19 @@ def _bench(root: Path, args) -> int:
         model = models[0] if models else model
     _print(f"Midiendo {model}…")
     started = time.time()
+    first: dict[str, float | None] = {"at": None}
+
+    def _mark(_token: str) -> None:
+        if first["at"] is None:
+            first["at"] = time.time() - started
+
     try:
         provider.chat(
             model,
             [{"role": "user", "content": "Responde solo: ok"}],
             num_predict=8,
             num_ctx=1024,
+            on_token=_mark,
         )
     except EpitaphError as exc:
         _print(exc.render())
@@ -382,6 +458,8 @@ def _bench(root: Path, args) -> int:
     elapsed = time.time() - started
     hw = detect_hardware()
     payload = next((item for item in provider.list_models() if item.get("name") == model), {})
+    if first["at"] is not None:
+        _print(f"primer token: {first['at']:.2f} s")
     _print(f"tiempo de respuesta: {elapsed:.2f} s")
     _print(f"RAM estimada del modelo: {estimate_ram_gb(payload):.1f} GB")
     _print(f"tok/s estimados: {estimate_tokens_per_second(payload, hw):.0f}")

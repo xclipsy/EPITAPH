@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import sys
+import time
 from pathlib import Path
 
 from .. import pipeline, requirements, safety, suggestions
@@ -28,7 +29,16 @@ from ..scheduler.trigger import parse_spec
 from ..state import State
 from . import banner
 from .tables import facts_panel, models_table
-from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
+from .theme import (
+    PRIMARY,
+    SECONDARY,
+    SUCCESS,
+    console,
+    styled,
+    supports_unicode,
+    use_rich,
+    write,
+)
 
 HELP = """
 Comandos disponibles
@@ -58,6 +68,41 @@ También puedes escribir en lenguaje natural:
 """
 
 
+class _Spinner:
+    """Spinner efímero que desaparece al llegar el primer token."""
+
+    def __init__(self, label: str) -> None:
+        self._status = None
+        self.tokens = 0
+        if use_rich() and sys.stdout.isatty():
+            try:
+                self._status = console().status(f"[{SECONDARY}]{label}[/]", spinner="dots")
+                self._status.__enter__()
+            except Exception:  # noqa: BLE001
+                self._status = None
+
+    @property
+    def active(self) -> bool:
+        return self._status is not None
+
+    def token(self, _token: str) -> None:
+        self.tokens += 1
+        if self.tokens % 8 == 0:
+            self.update(f"generando prosa… {self.tokens} tokens")
+
+    def update(self, label: str) -> None:
+        if self._status is not None:
+            self._status.update(f"[{SECONDARY}]{label}[/]")
+
+    def stop(self) -> None:
+        if self._status is not None:
+            try:
+                self._status.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._status = None
+
+
 class ChatSession:
     def __init__(self, root: Path, config: Config, state: State | None = None) -> None:
         self.root = Path(root).resolve()
@@ -70,6 +115,7 @@ class ChatSession:
             max_items=config.preferences.max_directives,
         )
         self.last_update = None
+        self._facts_cache: tuple[float, dict] | None = None
 
     # ------------------------------------------------------------------ loop
 
@@ -80,25 +126,29 @@ class ChatSession:
             f"modelo: {self.config.llm.roles.writer} · cadencia: {self.config.trigger.default}\n"
         )
         self._print("Escribe /help para ver los comandos.\n")
+        self._warmup()
 
-        while True:
-            try:
-                line = self._read()
-            except (KeyboardInterrupt, EOFError):
-                self._print("\nSaliendo.")
-                return 0
-            if line is None:
-                return 0
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                if not self.handle(line):
+        try:
+            while True:
+                try:
+                    line = self._read()
+                except (KeyboardInterrupt, EOFError):
+                    self._print("\nSaliendo.")
                     return 0
-            except EpitaphError as exc:
-                self._print(f"[red]{exc.render()}[/red]" if use_rich() else exc.render())
-            except Exception as exc:  # noqa: BLE001
-                self._print(f"[red]error inesperado: {exc}[/red]" if use_rich() else str(exc))
+                if line is None:
+                    return 0
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    if not self.handle(line):
+                        return 0
+                except EpitaphError as exc:
+                    self._print(f"[red]{exc.render()}[/red]" if use_rich() else exc.render())
+                except Exception as exc:  # noqa: BLE001
+                    self._print(f"[red]error inesperado: {exc}[/red]" if use_rich() else str(exc))
+        finally:
+            self.provider.close()
 
     def _read(self) -> str | None:
         if not sys.stdin.isatty():
@@ -191,7 +241,7 @@ class ChatSession:
     # ------------------------------------------------------------- commands
 
     def _status(self) -> None:
-        facts = analyze(self.root)
+        facts = self._facts()
         facts_panel(facts)
         self._print(
             f"[{SECONDARY}]cadencia:[/] {self.config.trigger.default} · "
@@ -215,16 +265,23 @@ class ChatSession:
             self._print("Permiso denegado para escribir el README (/permissions).")
             return
 
-        self._print("Analizando y generando…")
-        result = pipeline.update(
-            self.root,
-            self.config,
-            self.state,
-            provider=self.provider,
-            use_llm=True,
-            dry_run=dry_run,
-            auto_approve=auto,
-        )
+        spinner = _Spinner("analizando y generando…")
+        if not spinner.active:
+            self._print("Analizando y generando…")
+        try:
+            result = pipeline.update(
+                self.root,
+                self.config,
+                self.state,
+                provider=self.provider,
+                use_llm=True,
+                dry_run=dry_run,
+                auto_approve=auto,
+                on_token=spinner.token if spinner.active else None,
+            )
+        finally:
+            spinner.stop()
+        self._facts_cache = None
         self.last_update = result
         if result.merge and result.merge.changes:
             for change in result.merge.changes:
@@ -273,7 +330,7 @@ class ChatSession:
         self._print(f"Restaurado desde {latest.name}")
 
     def _suggestions(self) -> None:
-        facts = analyze(self.root)
+        facts = self._facts()
         deps = requirements.analyze(self.root, facts, self.config)
         items = suggestions.build(facts, deps, self.root)
         effective = resolve(self.config, self.store.items)
@@ -288,7 +345,7 @@ class ChatSession:
             )
 
     def _requirements(self) -> None:
-        facts = analyze(self.root)
+        facts = self._facts()
         result = requirements.analyze(self.root, facts, self.config)
         diff = requirements.render_diff(self.root, self.config, result)
         self._print(diff or "Sin diferencias: las dependencias coinciden.")
@@ -427,28 +484,81 @@ class ChatSession:
             if self._propose(line):
                 return True
 
-        if self.provider.is_available():
-            try:
-                facts = analyze(self.root)
-                models = installed_names(self.provider.list_models())
-                model = resolve_model("chat", self.config, models)
-                answer = self.provider.chat(
-                    model,
-                    build_question_messages(line, facts),
-                    num_ctx=self.config.llm.params.num_ctx,
-                    num_predict=250,
-                    temperature=0.2,
-                )
-                self._print(answer.strip())
-                return True
-            except EpitaphError:
-                pass
+        facts = self._facts()
+        try:
+            models = installed_names(self.provider.list_models())
+            model = resolve_model("chat", self.config, models)
+        except EpitaphError:
+            model = ""
+        if model:
+            self._answer(model, build_question_messages(line, facts))
+            return True
 
         self._print(
             "No entendí esa petición. Usa /help, o formula una preferencia "
             "como «prefiero el árbol al final y sin badges»."
         )
         return True
+
+    def _answer(self, model: str, messages: list[dict]) -> None:
+        """Imprime la respuesta a medida que el modelo la escribe."""
+        started = time.perf_counter()
+        first: dict[str, float | None] = {"at": None}
+        spinner = _Spinner("pensando…")
+        streaming = self.config.ui.stream
+
+        def on_token(token: str) -> None:
+            if first["at"] is None:
+                first["at"] = time.perf_counter() - started
+                spinner.stop()
+                marker = "│ " if supports_unicode() else "| "
+                if styled():
+                    console().print(f"[{SECONDARY}]{marker}[/]", end="")
+                else:
+                    write(marker)
+            write(token)
+
+        try:
+            answer = self.provider.chat(
+                model,
+                messages,
+                num_ctx=self.config.llm.params.num_ctx,
+                num_predict=250,
+                temperature=self.config.llm.params.temperature,
+                keep_alive=self.config.llm.params.keep_alive,
+                on_token=on_token if streaming else None,
+            )
+        except KeyboardInterrupt:
+            write("\n")
+            self._print(f"[{SECONDARY}]generación interrumpida[/]")
+            return
+        except EpitaphError as exc:
+            write("\n")
+            self._print(f"[{SECONDARY}]{exc.render()}[/]")
+            return
+        finally:
+            spinner.stop()
+
+        if not streaming:
+            self._print(answer.strip())
+            return
+        if first["at"] is None:
+            self._print(answer.strip() or "(respuesta vacía)")
+            return
+
+        elapsed = time.perf_counter() - started
+        stats = self.provider.last_stats
+        details = [f"{stats.get('tokens') or 0} tokens"]
+        if stats.get("tok_per_s"):
+            details.append(f"{stats['tok_per_s']} tok/s")
+        details.append(f"primer token {first['at']:.2f} s")
+        details.append(f"total {elapsed:.1f} s")
+        write("\n")
+        footer = "· " + " · ".join(details)
+        if styled():
+            console().print(f"[{SECONDARY}]{footer}[/]")
+        else:
+            write(footer + "\n")
 
     def _propose(self, text: str) -> bool:
         proposal = build(text, detect(text).scope_hint, self.config, len(self.store.items))
@@ -491,6 +601,26 @@ class ChatSession:
         return True
 
     # -------------------------------------------------------------- helpers
+
+    def _warmup(self) -> None:
+        """Precarga el modelo del chat: la primera pregunta no paga la carga."""
+        try:
+            models = installed_names(self.provider.list_models())
+            model = resolve_model("chat", self.config, models)
+        except EpitaphError:
+            return
+        self.provider.warmup(model, keep_alive=self.config.llm.params.keep_alive)
+
+    def _facts(self, *, fresh: bool = False) -> dict:
+        """Análisis determinista con caché corta: no reanalizar en cada mensaje."""
+        now = time.monotonic()
+        if not fresh and self._facts_cache is not None:
+            cached_at, cached = self._facts_cache
+            if now - cached_at < 3.0:
+                return cached
+        facts = analyze(self.root)
+        self._facts_cache = (now, facts)
+        return facts
 
     def _confirm(self, prompt: str) -> bool:
         if not sys.stdin.isatty():

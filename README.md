@@ -35,10 +35,19 @@ epitaph init          # configuración guiada (funciones, cadencia, modelo, perm
 epitaph               # chat interactivo
 epitaph update --dry  # propuesta de README sin escribir
 epitaph analyze       # hechos del proyecto en JSON
+epitaph describe      # describe la carpeta actual (no escribe nada)
+epitaph describe ../otro-repo --md --out DOC.md
 epitaph prefs         # preferencias confirmadas
 epitaph structure     # estructura efectiva del README
 epitaph doctor        # diagnóstico del entorno
 ```
+
+`describe` funciona en cualquier carpeta, sin `.epitaph/config.toml`: analiza el
+código y, si hay un modelo local disponible, añade prosa. Con `--json` devuelve
+los hechos completos y con `--md` el README propuesto.
+
+En el chat la respuesta se escribe token a token y termina con métricas
+(`tok/s`, tiempo al primer token y total).
 
 Dentro del chat:
 

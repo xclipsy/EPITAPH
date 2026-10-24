@@ -1,9 +1,10 @@
-"""Pipeline de actualización: análisis -> prosa -> merge -> escritura segura."""
+"""Pipeline de actualizaciÃ³n: anÃ¡lisis -> prosa -> merge -> escritura segura."""
 
 from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +54,7 @@ def update(
     dry_run: bool = False,
     force: bool = False,
     auto_approve: bool = False,
+    on_token: Callable[[str], None] | None = None,
 ) -> RunResult:
     root = Path(root).resolve()
     started = time.time()
@@ -70,8 +72,8 @@ def update(
     prose: ProsePayload | None = None
     tokens_in = tokens_out = 0
     if use_llm and config.features.readme:
-        prose, tokens_in, tokens_out = _generate_prose(
-            root, facts, effective_config, effective, provider
+        prose, tokens_in, tokens_out = generate_prose(
+            root, facts, effective_config, effective, provider, on_token=on_token
         )
 
     readme_enabled = config.features.readme
@@ -104,7 +106,7 @@ def update(
             prose=prose,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
-            skipped_reason="marcadores inválidos: se generó README.suggested.md",
+            skipped_reason="marcadores invÃ¡lidos: se generÃ³ README.suggested.md",
             duration_ms=int((time.time() - started) * 1000),
             requirements=deps,
         )
@@ -198,11 +200,11 @@ def _guard_write(config: Config, root: Path, force: bool, auto_approve: bool) ->
     if verdict == "deny":
         raise PermissionDenied(
             "permiso denegado para escribir el README",
-            hint="usa /permissions o cambia [permissions].write_readme en la configuración",
+            hint="usa /permissions o cambia [permissions].write_readme en la configuraciÃ³n",
         )
     if verdict == "ask" and not auto_approve:
         raise PermissionDenied(
-            "el permiso de escritura del README está en 'ask'",
+            "el permiso de escritura del README estÃ¡ en 'ask'",
             hint="ejecuta con --yes o cambia el permiso a 'allow'",
         )
 
@@ -210,7 +212,7 @@ def _guard_write(config: Config, root: Path, force: bool, auto_approve: bool) ->
         clean, status_text = safety.status(root)
         if not clean:
             raise DirtyWorkTree(
-                "el árbol de git tiene cambios sin confirmar",
+                "el Ã¡rbol de git tiene cambios sin confirmar",
                 hint="haz commit/stash o usa --force para escribir igualmente",
             )
 
@@ -224,18 +226,17 @@ def _touch_state(root: Path, state: State, ok: bool) -> None:
     state.save(root)
 
 
-def _generate_prose(
+def generate_prose(
     root: Path,
     facts: dict,
     config: Config,
     effective: Effective,
     provider: OllamaProvider | None,
+    on_token: Callable[[str], None] | None = None,
 ) -> tuple[ProsePayload | None, int, int]:
     if provider is None:
         return None, 0, 0
     try:
-        if not provider.is_available():
-            return None, 0, 0
         models = installed_names(provider.list_models())
         model = resolve_model("writer", config, models)
     except EpitaphError:
@@ -251,10 +252,13 @@ def _generate_prose(
             temperature=config.llm.params.temperature,
             num_thread=config.llm.params.num_thread,
             keep_alive=config.llm.params.keep_alive,
+            on_token=on_token,
         )
         payload = filter_notes(parse_prose(raw), facts)
-        return payload, 0, 0
+        stats = provider.last_stats
+        return payload, int(stats.get("prompt_tokens") or 0), int(stats.get("tokens") or 0)
     except (EpitaphError, InvalidModelOutput, ValueError):
         return None, 0, 0
     except Exception:
         return None, 0, 0
+
