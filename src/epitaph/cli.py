@@ -48,7 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Documentación viva, local y no destructiva.",
     )
     parser.add_argument("--version", action="version", version=f"epitaph {__version__}")
-    parser.add_argument("-C", "--path", default=".", help="ruta del proyecto (default: .)")
+    parser.add_argument(
+        "-C",
+        "--path",
+        default=None,
+        help="ruta del proyecto (default: workspace activo o .)",
+    )
     parser.add_argument("--no-llm", action="store_true", help="no usar el modelo")
 
     sub = parser.add_subparsers(dest="command")
@@ -111,7 +116,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    root = Path(args.path).expanduser().resolve()
+    if args.command == "init":
+        root = (
+            Path(args.path).expanduser().resolve()
+            if args.path is not None
+            else Path.cwd().resolve()
+        )
+    else:
+        root = _resolve_root(args.path)
 
     try:
         if args.command in (None, "chat"):
@@ -129,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
 
             res = wizard_run(root, config)
             root, config = res.root, res.config
+            from .fs import set_active_workspace
+
+            set_active_workspace(root)
             info_panel(
                 f"Configuración completada para [bold white]{root}[/bold white].\n"
                 f"[{SECONDARY}]cadencia:[/] [bold white]{config.trigger.default}[/bold white]\n"
@@ -260,6 +275,33 @@ def main(argv: list[str] | None = None) -> int:
 
 
 # ------------------------------------------------------------------ helpers
+
+
+def _resolve_root(path_arg: str | None) -> Path:
+    """Resuelve la carpeta de trabajo del proyecto."""
+    if path_arg is not None:
+        return Path(path_arg).expanduser().resolve()
+
+    from .fs import get_active_workspace
+
+    active = get_active_workspace()
+    if active is not None and active.exists() and active.is_dir():
+        return active
+
+    cwd = Path.cwd().resolve()
+    cfg_file = cwd / ".epitaph" / "config.toml"
+    if cfg_file.exists():
+        try:
+            c = Config.load_or_default(cwd)
+            if c.project.target_path:
+                tp = Path(c.project.target_path).expanduser().resolve()
+                if tp.exists() and tp.is_dir():
+                    return tp
+        except Exception:
+            pass
+        return cwd
+
+    return cwd
 
 
 def _require_config(root: Path) -> Config:

@@ -34,7 +34,11 @@ def run(
     config: Config | None = None,
     non_interactive: bool = False,
 ) -> WizardResult:
+    from ..fs import get_active_workspace, set_active_workspace
+
     root = Path(root).resolve()
+    active_ws = get_active_workspace()
+    default_custom = str(active_ws) if (active_ws and active_ws.exists()) else str(root)
 
     _say("\n[bold]Vamos a configurar EPITAPH para tu proyecto.[/bold]\n")
 
@@ -54,12 +58,15 @@ def run(
             target_table.add_row(
                 "1",
                 "Directorio Actual",
-                f"Trabajar en la carpeta actual ({root.name})",
+                f"Trabajar en la carpeta ({root.name})",
             )
+            desc_custom = "Ingresar la ruta absoluta o relativa de la carpeta del proyecto"
+            if active_ws and active_ws != root:
+                desc_custom += f" [activo: {active_ws}]"
             target_table.add_row(
                 "2",
                 "Ruta Personalizada",
-                "Ingresar la ruta absoluta o relativa de la carpeta del proyecto",
+                desc_custom,
             )
             console().print(target_table)
         else:
@@ -72,10 +79,11 @@ def run(
             while True:
                 path_input = _ask(
                     "Ingresa la ruta de la carpeta de trabajo del proyecto",
-                    str(root),
+                    default_custom,
                     non_interactive,
                 ).strip()
                 if not path_input:
+                    root = Path(default_custom).expanduser().resolve()
                     break
                 candidate = Path(path_input).expanduser().resolve()
                 if not candidate.exists():
@@ -102,6 +110,7 @@ def run(
 
     cfg = config or Config.load_or_default(root)
     cfg.project.name = root.name
+    cfg.project.target_path = str(root)
 
     # 2. Funciones a activar
     _say("\n[bold]Funciones principales:[/bold]")
@@ -221,10 +230,12 @@ def run(
     cfg.permissions.write_readme = permission
 
     # Guardar configuración y estado en la carpeta de trabajo seleccionada
+    cfg.project.target_path = str(root)
     cfg.save(root)
     state = State.load(root)
     state.wizard_completed = True
     state.save(root)
+    set_active_workspace(root)
 
     _say(f"\nConfiguración guardada en: {Config.path_for(root)}")
     _say(f"Carpeta de trabajo: [bold white]{root}[/bold white]")

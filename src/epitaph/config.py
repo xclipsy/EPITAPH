@@ -23,6 +23,7 @@ class _Model(BaseModel):
 
 class ProjectCfg(_Model):
     name: str = ""
+    target_path: str = ""
     output_language: str = "es"
     ignore_file: str = ".epitaphignore"
 

@@ -143,3 +143,79 @@ def test_init_wizard_custom_workspace_option(tmp_path: Path, monkeypatch) -> Non
     assert res.config.trigger.default == "on_save"
     assert res.config.project.name == custom_dir.name
     assert (custom_dir / ".epitaph" / "config.toml").exists()
+
+
+def test_resolve_root_uses_active_workspace(tmp_path: Path, monkeypatch) -> None:
+    from epitaph.fs import set_active_workspace
+
+    custom_ws = tmp_path / "saved_workspace"
+    custom_ws.mkdir()
+    (custom_ws / ".epitaph").mkdir()
+    (custom_ws / ".epitaph" / "config.toml").write_text("[project]\nname = 'saved_ws'\n")
+
+    # Mock global config file location to tmp_path
+    global_file = tmp_path / "active_workspace.txt"
+    monkeypatch.setattr("epitaph.fs.get_global_workspace_file", lambda: global_file)
+
+    set_active_workspace(custom_ws)
+    assert global_file.read_text(encoding="utf-8").strip() == str(custom_ws.resolve())
+
+    # When no -C / --path argument is given, _resolve_root resolves to the active workspace
+    resolved = cli._resolve_root(None)
+    assert resolved == custom_ws.resolve()
+
+    # When explicit path is given, it takes priority
+    explicit_path = tmp_path / "explicit"
+    explicit_path.mkdir()
+    assert cli._resolve_root(str(explicit_path)) == explicit_path.resolve()
+
+
+def test_cli_command_automatically_targets_saved_workspace(tmp_path: Path, monkeypatch, capsys) -> None:
+    from epitaph.fs import set_active_workspace
+
+    custom_ws = tmp_path / "auto_workspace"
+    custom_ws.mkdir()
+    (custom_ws / "src").mkdir()
+    (custom_ws / "src" / "main.py").write_text("print('hello')\n")
+    (custom_ws / ".epitaph").mkdir()
+    (custom_ws / ".epitaph" / "config.toml").write_text("[project]\nname = 'auto_ws'\n")
+
+    global_file = tmp_path / "global_active_ws.txt"
+    monkeypatch.setattr("epitaph.fs.get_global_workspace_file", lambda: global_file)
+    set_active_workspace(custom_ws)
+
+    # Run cli analyze --json without passing -C
+    code = cli.main(["analyze", "--json"])
+    assert code == 0
+    captured = capsys.readouterr().out
+    assert "auto_ws" in captured or "main.py" in captured
+
+
+def test_chat_workspace_command(tmp_path: Path, monkeypatch) -> None:
+    from epitaph.ui.chat import ChatSession
+
+    ws1 = tmp_path / "ws1"
+    ws1.mkdir()
+    (ws1 / ".epitaph").mkdir()
+    cfg1 = Config.load_or_default(ws1)
+    cfg1.save(ws1)
+
+    ws2 = tmp_path / "ws2"
+    ws2.mkdir()
+    (ws2 / ".epitaph").mkdir()
+    cfg2 = Config.load_or_default(ws2)
+    cfg2.save(ws2)
+
+    global_file = tmp_path / "global_ws.txt"
+    monkeypatch.setattr("epitaph.fs.get_global_workspace_file", lambda: global_file)
+
+    session = ChatSession(ws1, cfg1)
+    assert session.root == ws1.resolve()
+
+    # Query workspace
+    assert session.handle("/workspace") is True
+
+    # Switch workspace
+    assert session.handle(f"/workspace {ws2}") is True
+    assert session.root == ws2.resolve()
+

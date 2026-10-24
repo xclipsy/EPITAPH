@@ -72,6 +72,7 @@ COMMANDS = (
     "/structure",
     "/permissions",
     "/config",
+    "/workspace",
     "/doctor",
     "/clear",
     "/exit",
@@ -80,6 +81,7 @@ COMMANDS = (
 HELP_ROWS = [
     ("/help", "Muestra esta guía y los atajos interactivos", "/help o ayuda"),
     ("/status", "Panel general de estado y planificador", "/status"),
+    ("/workspace [ruta]", "Muestra o cambia la carpeta de trabajo activa", "/workspace o /workspace /ruta/proyecto"),
     ("/tree", "Muestra el árbol jerárquico de carpetas y archivos", "/tree o arbol"),
     ("/view <archivo>", "Inspecciona código con resaltado y líneas", "/view cli.py 1 50 o /view 1"),
     ("/metrics", "Panel de métricas estáticas de calidad y salud", "/metrics o metricas"),
@@ -165,8 +167,9 @@ class ChatSession:
             f"[dim]Motor activo: [bold white]{models}[/bold white] · num_ctx: {self.config.llm.params.num_ctx} · {hw_profile}[/dim]\n\n"
             f"[white]Documentación viva, sincronización reactiva de README y auditoría arquitectónica con Ollama.[/white]\n"
             f"[{SECONDARY}]Proyecto:[/] [bold white]{self.config.project_name(self.root)}[/bold white] [{SECONDARY}]({self.root.name})[/] · "
+            f"[{SECONDARY}]Ruta:[/] [bold white]{self.root}[/bold white] · "
             f"[{SECONDARY}]Cadencia:[/] [bold white]{self.config.trigger.default}[/bold white]\n\n"
-            f"[{SECONDARY}]Escribe [bold white]/help[/bold white] para ver el catálogo de 22 comandos (/tree, /view, /status, /update, /models, /cycles, /secrets...).\n"
+            f"[{SECONDARY}]Escribe [bold white]/help[/bold white] para ver el catálogo de comandos (/tree, /view, /status, /workspace, /update, /models...).\n"
             f"Escribe el número de una cita ([bold white]1[/bold white], [bold white]2[/bold white]...), el nombre de un archivo o una preferencia en lenguaje natural.[/]"
         )
         console().print(
@@ -320,6 +323,9 @@ class ChatSession:
             return True
         if cmd_lower == "/config":
             self._config()
+            return True
+        if cmd_lower in ("/workspace", "/ws"):
+            self._workspace(argument)
             return True
         if cmd_lower == "/doctor":
             self._doctor()
@@ -475,6 +481,7 @@ class ChatSession:
             "Planificador y preferencias",
             [
                 ("proyecto", self.config.project_name(self.root)),
+                ("ruta / workspace", str(self.root)),
                 ("cadencia", self.config.trigger.default),
                 ("pausado", "sí" if self.state.paused else "no"),
                 ("último run", self.state.last_run or "—"),
@@ -482,6 +489,45 @@ class ChatSession:
                 ("config", str(Config.path_for(self.root))),
             ],
             footer="usa /update --dry para revisar cambios sin escribir",
+        )
+
+    def _workspace(self, path_arg: str = "") -> None:
+        from ..fs import get_active_workspace, set_active_workspace
+
+        if not path_arg:
+            active = get_active_workspace()
+            kv_panel(
+                "Workspace activo",
+                [
+                    ("carpeta actual", str(self.root)),
+                    ("workspace persistido", str(active or self.root)),
+                    ("configuración", str(Config.path_for(self.root))),
+                ],
+                footer="usa /workspace <ruta> para cambiar de proyecto",
+                border=SUCCESS,
+            )
+            return
+
+        target = Path(path_arg).expanduser().resolve()
+        if not target.exists() or not target.is_dir():
+            error_panel(f"La ruta '{target}' no existe o no es un directorio.", "verifica la ruta")
+            return
+
+        set_active_workspace(target)
+        self.root = target
+        self.config = Config.load_or_default(target)
+        self.state = State.load(target)
+        self.store = PreferenceStore.for_root(
+            self.root,
+            self.config.preferences.path,
+            max_items=self.config.preferences.max_directives,
+        )
+        info_panel(
+            f"Workspace cambiado a: [bold white]{self.root}[/bold white]\n"
+            f"[{SECONDARY}]Proyecto:[/] {self.config.project_name(self.root)}\n"
+            f"[{SECONDARY}]Cadencia:[/] {self.config.trigger.default}",
+            title="Workspace actualizado",
+            border=SUCCESS,
         )
 
     def _update(self, dry_run: bool = False) -> None:
