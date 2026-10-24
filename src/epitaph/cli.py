@@ -33,6 +33,7 @@ from .ui import banner
 from .ui.components import (
     catalog_table,
     diff_panel,
+    error_panel,
     info_panel,
     kv_panel,
     tip,
@@ -267,7 +268,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     except EpitaphError as exc:
-        print(exc.render(), file=sys.stderr)
+        error_panel(exc.message, exc.hint)
         return exc.exit_code
     except KeyboardInterrupt:
         print("\ninterrumpido", file=sys.stderr)
@@ -305,6 +306,15 @@ def _resolve_root(path_arg: str | None) -> Path:
 
 
 def _require_config(root: Path) -> Config:
+    path = Config.path_for(root)
+    if not path.exists():
+        from .errors import ConfigError
+
+        raise ConfigError(
+            f"EPITAPH no está configurado en este workspace ({root}).\n"
+            f"No se encontró el archivo de configuración en {path}.",
+            hint="Ejecuta `uv run epitaph init` para configurar la carpeta de trabajo, cadencia y modelos.",
+        )
     return Config.load(root)
 
 

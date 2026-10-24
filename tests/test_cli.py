@@ -219,3 +219,16 @@ def test_chat_workspace_command(tmp_path: Path, monkeypatch) -> None:
     assert session.handle(f"/workspace {ws2}") is True
     assert session.root == ws2.resolve()
 
+
+def test_unconfigured_workspace_shows_error_message(tmp_path: Path, monkeypatch, capsys) -> None:
+    monkeypatch.setattr("epitaph.fs.get_active_workspace", lambda: None)
+    unconfigured = tmp_path / "empty_dir"
+    unconfigured.mkdir()
+
+    code = cli.main(["-C", str(unconfigured)])
+    assert code == 1
+    captured = capsys.readouterr().out
+    assert "EPITAPH no está configurado" in captured
+    assert "uv run epitaph init" in captured
+
+

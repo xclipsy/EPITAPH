@@ -188,8 +188,9 @@ class Config(_Model):
         path = cls.path_for(root)
         if not path.exists():
             raise ConfigError(
-                f"No existe la configuración en {path}",
-                hint="ejecuta `epitaph init` para crearla",
+                f"EPITAPH no está configurado en este workspace ({root}).\n"
+                f"No se encontró el archivo de configuración en {path}.",
+                hint="Ejecuta `uv run epitaph init` para configurar la carpeta de trabajo y opciones.",
             )
         try:
             raw = tomllib.loads(path.read_text(encoding="utf-8"))
