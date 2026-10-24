@@ -101,9 +101,7 @@ def run(
                 break
 
     cfg = config or Config.load_or_default(root)
-    cfg.project.name = _ask(
-        "Nombre del proyecto", cfg.project.name or root.name, non_interactive
-    )
+    cfg.project.name = root.name
 
     # 2. Funciones a activar
     _say("\n[bold]Funciones principales:[/bold]")
@@ -117,12 +115,12 @@ def run(
         non_interactive,
     )
 
-    # 3. Temporizadores / Cadencia
+    # 3. Temporizadores / Opción de Autocompletador
     if use_rich():
         from rich.table import Table
 
         timer_table = Table(
-            title=f"[bold {PRIMARY}]Frecuencia de Actualización / Temporizadores[/bold {PRIMARY}]",
+            title=f"[bold {PRIMARY}]Opción de Autocompletador[/bold {PRIMARY}]",
             border_style=PRIMARY,
             show_header=False,
         )
@@ -148,7 +146,7 @@ def run(
         timer_table.add_row("9", "personalizado", "Especificar otro intervalo en minutos")
         console().print(timer_table)
     else:
-        _say("\n¿Cada cuánto quieres que EPITAPH analice el proyecto?")
+        _say("\nOpción de Autocompletador:")
         _say("  [1] Cada vez que se haga autosave (guardado automático del editor)")
         _say("  [2] Cada vez que se haga save (guardado manual)")
         _say("  [3] Cada 1 minuto")
@@ -159,7 +157,7 @@ def run(
         _say("  [8] Solo manual (/update)")
         _say("  [9] Otro valor personalizado")
 
-    choice = _ask("Opción de cadencia", "4", non_interactive)
+    choice = _ask("Opción de Autocompletador", "4", non_interactive)
     cadence = {
         "1": "on_autosave",
         "2": "on_save",
@@ -230,7 +228,7 @@ def run(
 
     _say(f"\nConfiguración guardada en: {Config.path_for(root)}")
     _say(f"Carpeta de trabajo: [bold white]{root}[/bold white]")
-    _say(f"Cadencia configurada: [bold white]{cfg.trigger.default}[/bold white]\n")
+    _say(f"Opción de Autocompletador: [bold white]{cfg.trigger.default}[/bold white]\n")
 
     return WizardResult(root, cfg)
 

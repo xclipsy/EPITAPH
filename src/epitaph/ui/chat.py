@@ -979,24 +979,34 @@ class ChatSession:
     def _stream_answer(self, model: str, messages: list[dict]) -> str:
         options = {
             "num_ctx": self.config.llm.params.num_ctx,
-            "num_predict": 250,
+            "num_predict": self.config.llm.params.num_predict,
             "temperature": 0.2,
         }
         con = console()
-        if not use_rich() or not con.is_terminal:
-            answer = self.provider.chat(model, messages, **options)
-            if answer.strip():
-                answer_panel(answer, model=model)
-            return answer
-
-        from rich.live import Live
 
         chunks: list[str] = []
+
+        if not use_rich() or not con.is_terminal:
+            # Streaming en tiempo real token a token sin buffering por batch
+            sys.stdout.write(f"\n╭─── EPITAPH ({model} · local) ───╮\n")
+            sys.stdout.flush()
+
+            def on_token_pipe(token: str) -> None:
+                chunks.append(token)
+                sys.stdout.write(token)
+                sys.stdout.flush()
+
+            self.provider.chat(model, messages, on_token=on_token_pipe, **options)
+            sys.stdout.write("\n╰─────────────────────────────────╯\n")
+            sys.stdout.flush()
+            return "".join(chunks)
+
+        from rich.live import Live
 
         def render(text: str):
             return answer_renderable(text, model=model, spinner=True)
 
-        with Live(render(""), console=con, refresh_per_second=12, transient=True) as live:
+        with Live(render(""), console=con, refresh_per_second=15, transient=True) as live:
 
             def on_token(token: str) -> None:
                 chunks.append(token)
