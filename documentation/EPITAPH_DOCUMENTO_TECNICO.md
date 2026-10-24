@@ -1332,6 +1332,9 @@ Si el usuario fija un valor en `config.toml` y una preferencia del chat lo contr
 
 ## 19. Diseño visual de la TUI
 
+Referencia de lenguaje visual: la CLI de PRAXIA (`Panel`, `Table`, `Markdown`, `Live`,
+`Rule` y tips `-> Tip:`), reinterpretada con la paleta propia de EPITAPH.
+
 ### 19.1 Paleta
 
 | Rol | Hex | Uso |
@@ -1347,32 +1350,69 @@ Nota de accesibilidad: `#8C0B47` sobre `#0D0D0D` no alcanza contraste para texto
 ### 19.2 Banner
 
 ```
-███████╗██████╗ ██╗████████╗ █████╗ ██████╗ ██╗  ██╗
-██╔════╝██╔══██╗██║╚══██╔══╝██╔══██╗██╔══██╗██║  ██║
-█████╗  ██████╔╝██║   ██║   ███████║██████╔╝███████║
-██╔══╝  ██╔═══╝ ██║   ██║   ██╔══██║██╔═══╝ ██╔══██║
-███████╗██║     ██║   ██║   ██║  ██║██║     ██║  ██║
-╚══════╝╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝
-        documentación viva · inferencia local
+╭─────────────────────────────────────────────────────────────────────╮
+│  ███████╗██████╗ ██╗████████╗ █████╗ ██████╗ ██╗  ██╗               │
+│  ██╔════╝██╔══██╗██║╚══██╔══╝██╔══██╗██╔══██╗██║  ██║               │
+│  █████╗  ██████╔╝██║   ██║   ███████║██████╔╝███████║               │
+│  ██╔══╝  ██╔═══╝ ██║   ██║   ██╔══██║██╔═══╝ ██╔══██║               │
+│  ███████╗██║     ██║   ██║   ██║  ██║██║     ██║  ██║               │
+│  ╚══════╝╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝               │
+│                                                                     │
+│    documentación viva · inferencia local · no destructiva           │
+│                                                                     │
+│    api-service · 100% local · qwen2.5-coder:3b · sin telemetría     │
+╰─────────────────────────────────────────────────────────────────────╯
 ```
 
-Animación: barrido de degradado `#F23078 → #8C0B47` sobre el banner (≈600 ms), una sola vez por sesión. Sin bucles infinitos que consuman CPU.
+El arte se dibuja dentro de un `Panel` con borde `#F23078`. Animación: barrido de
+degradado `#F23078 → #8C0B47` sobre el banner (≈600 ms), una sola vez por sesión. Sin
+bucles infinitos que consuman CPU.
 
 ### 19.3 Layout
 
 ```
-┌─ EPITAPH ────────────── proyecto: api-service ──────────────┐
-│                                                             │
-│  ● analizando 3 archivos…                                   │
-│  ● overview generado (128 tokens)                           │
-│  ● diff listo: +14 / -3                                     │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│ > /diff                                                     │
-└─ qwen2.5-coder:3b · 12 tok/s · ⏱ 03:12 · 4 pendientes ──────┘
+╭──────────────────── EPITAPH · qwen2.5-coder:3b · local ────────────────────╮
+│ Documentación viva, local y no destructiva                                  │
+│ proyecto: api-service · modelo: qwen2.5-coder:3b · cadencia: interval:5     │
+│ hardware: Linux x86_64 · 8 hilos · 13.6 GB · CPU                            │
+│                                                                             │
+│ Analizo el repositorio y mantengo el README sincronizado con el código.     │
+│ Escribe /help para ver los comandos, o formula una preferencia.             │
+╰─────────────────────────────────────────────────────────────────────────────╯
+-> Tip: prueba «prefiero el árbol al final y sin badges» o «¿qué hace este proyecto?»
+
+────────────────────────────────────────────────────────────────────────────────
+epitaph › /help
+────────────────────────────────────────────────────────────────────────────────
+                         Catálogo de comandos · EPITAPH
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Comando           ┃ Propósito                     ┃ Sintaxis / ejemplo       ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ /help             │ Muestra esta guía y los       │ /help o ayuda            │
+│ /status           │ Estado del proyecto           │ /status                  │
+│ /update [--dry]   │ Analiza y actualiza el README │ /update --dry            │
+└───────────────────┴───────────────────────────────┴──────────────────────────┘
+-> Tip: también acepto lenguaje natural: «prefiero el árbol al final».
 ```
 
-### 19.4 Degradación
+Las respuestas del modelo se renderizan con `Panel(Markdown(...))` y título
+`EPITAPH (modelo · local)`. Mientras llegan los tokens se muestra un `Spinner` entre dos
+reglas horizontales; al terminar, el panel final queda persistente.
+
+### 19.4 Componentes y estructura de respuestas
+
+| Elemento | Componente | Uso |
+|---|---|---|
+| Banner e introducción | `Panel` | Identidad, proyecto, modelo, cadencia y hardware |
+| Catálogos | `Table` | `/help`, `/permissions`, `/prefs`, `/structure`, backups |
+| Pares clave/valor | `Panel` + `Table.grid` | `/status`, `/model`, `/doctor`, `bench`, propuestas |
+| Respuestas del modelo | `Panel(Markdown)` | Lenguaje natural con streaming |
+| Diffs y configuración | `Panel(Syntax)` | `/diff`, `/config`, `requirements` |
+| Errores | `Panel` | Fallo + causa + acción recomendada |
+| Entrada | `Rule` + `PromptSession` | Reglas horizontales, `epitaph ›`, autocompletado |
+| Sugerencias | texto `-> Tip:` | Siguiente paso tras tablas y paneles |
+
+### 19.5 Degradación
 
 | Situación | Comportamiento |
 |---|---|

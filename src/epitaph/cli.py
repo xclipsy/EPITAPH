@@ -30,6 +30,13 @@ from .scheduler.watcher import Watcher
 from .scheduler.worker import Worker
 from .state import State
 from .ui import banner
+from .ui.components import (
+    catalog_table,
+    diff_panel,
+    info_panel,
+    kv_panel,
+    tip,
+)
 from .ui.notices import doctor_table, ollama_notice
 from .ui.tables import facts_panel, models_table
 from .ui.theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
@@ -124,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
             state = State.load(root)
             state.wizard_completed = True
             state.save(root)
-            _print("Listo. Ejecuta `epitaph` para abrir el chat.")
+            info_panel(
+                "Configuración inicial completada.\n"
+                f"[{SECONDARY}]siguiente paso:[/] [bold {SUCCESS}]epitaph[/bold {SUCCESS}]",
+                title="EPITAPH listo",
+                border=SUCCESS,
+            )
             return 0
 
         if args.command == "analyze":
@@ -180,10 +192,17 @@ def main(argv: list[str] | None = None) -> int:
             facts = analyze(root)
             result = requirements.analyze(root, facts, config)
             diff = requirements.render_diff(root, config, result)
-            _print(diff or "Sin diferencias: las dependencias declaradas coinciden.")
+            if diff:
+                diff_panel("requirements.txt · propuesta", diff)
+            else:
+                info_panel(
+                    "Las dependencias declaradas coinciden.",
+                    title="requirements.txt",
+                    border=SUCCESS,
+                )
             if not args.audit and result["missing"]:
                 target = requirements.write_suggested(root, config, result)
-                _print(f"Propuesta escrita en {target}")
+                tip(f"propuesta escrita en {target}")
             return 0
 
         if args.command == "suggestions":
@@ -196,9 +215,17 @@ def main(argv: list[str] | None = None) -> int:
             path, selected, hidden_prefs, hidden_status = suggestions.write_report(
                 root, config, items, effective
             )
-            _print(f"{len(selected)} sugerencias en {path}")
-            if hidden_prefs or hidden_status:
-                _print(f"ocultas: {hidden_prefs} por preferencias, {hidden_status} descartadas")
+            kv_panel(
+                "Sugerencias generadas",
+                [
+                    ("archivo", str(path)),
+                    ("incluidas", str(len(selected))),
+                    ("ocultas por preferencias", str(hidden_prefs)),
+                    ("descartadas antes", str(hidden_status)),
+                ],
+                border=SUCCESS,
+                footer=f"revisa {path.name} antes de aplicarlo",
+            )
             return 0
 
         if args.command == "prefs":
@@ -271,16 +298,35 @@ def _print(text: str) -> None:
 
 
 def _render_update(result) -> None:
-    if result.merge and result.merge.changes:
-        for change in result.merge.changes:
-            _print(f"  · {change}")
-    if result.skipped_reason:
-        _print(f"[{SECONDARY}]{result.skipped_reason}[/]")
+    changes = result.merge.changes if result.merge else []
     if result.written:
-        _print(f"[{SUCCESS}]✔ README actualizado[/] ({result.duration_ms} ms)")
+        state = f"[bold {SUCCESS}]README actualizado[/bold {SUCCESS}]"
+    elif result.skipped_reason:
+        state = f"[{SECONDARY}]{result.skipped_reason}[/]"
+    else:
+        state = f"[{SECONDARY}]sin cambios[/]"
+
+    body = [
+        f"[{SECONDARY}]estado:[/] {state}",
+        f"[{SECONDARY}]secciones:[/] {len(changes)} · "
+        f"[{SECONDARY}]duraci\u00f3n:[/] {result.duration_ms} ms · "
+        f"[{SECONDARY}]tokens:[/] {result.tokens_in} in / {result.tokens_out} out",
+    ]
+    if changes:
+        body.append("")
+        body.extend(f"[{SUCCESS}]·[/] {change}" for change in changes)
     if result.merge and result.merge.errors:
-        for error in result.merge.errors:
-            _print(f"marcador: {error}")
+        body.append("")
+        body.extend(f"[{PRIMARY}]marcador:[/] {error}" for error in result.merge.errors)
+
+    info_panel(
+        "\n".join(body),
+        title="Actualización · README.md",
+        border=SUCCESS if result.written else PRIMARY,
+    )
+    if result.merge and result.merge.notes:
+        for note in result.merge.notes:
+            tip(note)
 
 
 def _prefs(root: Path, args) -> int:
@@ -290,43 +336,68 @@ def _prefs(root: Path, args) -> int:
     if args.action == "add" and args.value:
         proposal = build(args.value, detect(args.value).scope_hint, config, len(store.items))
         if proposal is None:
-            _print("No pude convertir eso en una preferencia concreta.")
+            info_panel(
+                "No pude convertir eso en una preferencia concreta.",
+                title="Preferencias",
+                border=PRIMARY,
+            )
             return 1
         ok, error = validate(proposal, config)
         if not ok:
-            _print(f"No se puede aplicar: {error}")
+            info_panel(f"No se puede aplicar: {error}", title="Preferencias", border=PRIMARY)
             return 1
-        _print(f"propuesta: {proposal.scope} = {proposal.value}")
+        kv_panel(
+            "Propuesta de preferencia",
+            [
+                ("ámbito", proposal.scope),
+                ("valor", str(proposal.value)),
+                ("motivo", proposal.reason or "—"),
+            ],
+        )
         if not args.yes:
-            _print("Añade --yes para guardarla.")
+            tip("añade --yes para guardarla")
             return 0
         preference = store.add(proposal.scope, proposal.value, proposal.reason)
         safety.log(root, "preference:add", id=preference.id, scope=preference.scope)
-        _print(f"Guardada como {preference.id}.")
+        info_panel(
+            f"Guardada como [bold white]{preference.id}[/bold white].",
+            title="Preferencia guardada",
+            border=SUCCESS,
+        )
         return 0
 
     if args.action == "rm" and args.value:
         if store.remove(args.value):
-            _print(f"Eliminada {args.value}.")
+            info_panel(
+                f"Eliminada [bold white]{args.value}[/bold white].",
+                title="Preferencias",
+                border=SUCCESS,
+            )
             return 0
-        _print("No existe.")
+        info_panel("No existe.", title="Preferencias", border=PRIMARY)
         return 1
 
     if args.action == "clear":
         if not args.yes:
-            _print("Añade --yes para borrar todas las preferencias.")
+            tip("añade --yes para borrar todas las preferencias")
             return 0
         store.clear()
-        _print("Preferencias eliminadas.")
+        info_panel("Preferencias eliminadas.", title="Preferencias", border=SUCCESS)
         return 0
 
     if not store.items:
-        _print("No hay preferencias.")
+        info_panel("No hay preferencias.", title="Preferencias", border=SECONDARY)
         return 0
-    for preference in store.items:
-        _print(f"{preference.id}  {preference.scope} = {preference.value}  [{preference.origin}]")
-    _print("")
-    _print(directives_text(resolve(config, store.items)))
+    rows = [
+        (preference.id, preference.scope, str(preference.value)[:60], preference.origin)
+        for preference in store.items
+    ]
+    catalog_table("Preferencias guardadas", ["ID", "Ámbito", "Valor", "Origen"], rows)
+    info_panel(
+        directives_text(resolve(config, store.items)),
+        title="Directivas activas",
+        border=SECONDARY,
+    )
     return 0
 
 
@@ -338,11 +409,17 @@ def _structure(root: Path, args) -> int:
         store.save()
         config.readme.sections = list(Config.default().readme.sections)
         config.save(root)
-        _print("Estructura restablecida.")
+        info_panel(
+            "Estructura del README restablecida.",
+            title="Estructura",
+            border=SUCCESS,
+        )
         return 0
     effective = resolve(config, store.items)
-    for index, section in enumerate(effective.sections, start=1):
-        _print(f"{index}. {section}")
+    rows = [(str(index), section) for index, section in enumerate(effective.sections, 1)]
+    catalog_table("Estructura efectiva del README", ["#", "Sección"], rows)
+    if effective.sections != config.readme.sections:
+        tip("la estructura está modificada por preferencias; usa `epitaph structure reset`")
     return 0
 
 
@@ -378,24 +455,42 @@ def _models(root: Path, args) -> int:
 
     if args.action == "use":
         if not args.value:
-            _print(f"Modelo actual: {config.llm.roles.writer}")
+            kv_panel(
+                "Modelo activo",
+                [("writer", config.llm.roles.writer)],
+                footer="usa `epitaph models use <modelo>` para fijar uno global",
+            )
             return 0
         for role in ("summarizer", "writer", "advisor", "chat"):
             setattr(config.llm.roles, role, args.value)
         config.save(root)
-        _print(f"Modelo global: {args.value}")
+        info_panel(
+            f"Todos los roles usan [bold white]{args.value}[/bold white].",
+            title="Modelo global",
+            border=SUCCESS,
+        )
         return 0
 
     if args.action == "role":
         if not args.value or not args.role:
-            _print("Uso: epitaph models role <rol> <modelo>")
+            info_panel(
+                "Uso: `epitaph models role <rol> <modelo>`",
+                title="Roles",
+                border=PRIMARY,
+            )
+            tip("roles disponibles: summarizer, writer, advisor, chat")
             return 1
         if not hasattr(config.llm.roles, args.value):
-            _print("Roles: summarizer, writer, advisor, chat")
+            info_panel("Rol desconocido.", title="Roles", border=PRIMARY)
+            tip("roles disponibles: summarizer, writer, advisor, chat")
             return 1
         setattr(config.llm.roles, args.value, args.role)
         config.save(root)
-        _print(f"{args.value} = {args.role}")
+        kv_panel(
+            "Rol actualizado",
+            [("rol", args.value), ("modelo", args.role)],
+            border=SUCCESS,
+        )
         return 0
 
     models = provider.list_models()
@@ -427,11 +522,18 @@ def _bench(root: Path, args) -> int:
     elapsed = time.time() - started
     hw = detect_hardware()
     payload = next((item for item in provider.list_models() if item.get("name") == model), {})
-    _print(f"tiempo de respuesta: {elapsed:.2f} s")
-    _print(f"RAM estimada del modelo: {estimate_ram_gb(payload):.1f} GB")
-    _print(f"tok/s estimados: {estimate_tokens_per_second(payload, hw):.0f}")
     ok, reason = viable(payload, hw)
-    _print(f"viabilidad: {'sí' if ok else 'no'} ({reason})")
+    kv_panel(
+        "Benchmark local",
+        [
+            ("modelo", model),
+            ("respuesta", f"{elapsed:.2f} s"),
+            ("RAM estimada", f"{estimate_ram_gb(payload):.1f} GB"),
+            ("tok/s estimados", f"{estimate_tokens_per_second(payload, hw):.0f}"),
+            ("viable", f"{'sí' if ok else 'no'} ({reason})"),
+        ],
+        border=SUCCESS if ok else PRIMARY,
+    )
     return 0
 
 
@@ -486,16 +588,20 @@ def _undo(root: Path, args) -> int:
     config = Config.load_or_default(root)
     backups = safety.list_backups(root, Path(config.readme.path).name)
     if not backups:
-        _print("No hay backups.")
+        info_panel("No hay backups.", title="Undo", border=SECONDARY)
         return 1
     if args.list:
-        for backup in backups:
-            _print(str(backup))
+        rows = [(str(index), backup.name) for index, backup in enumerate(backups, 1)]
+        catalog_table("Backups disponibles", ["#", "Archivo"], rows)
         return 0
     latest = backups[0]
     safety.restore(latest, root / config.readme.path)
     safety.log(root, "undo:readme", backup=str(latest))
-    _print(f"Restaurado desde {latest}")
+    info_panel(
+        f"README restaurado desde [bold white]{latest}[/bold white].",
+        title="Undo completado",
+        border=SUCCESS,
+    )
     return 0
 
 
@@ -514,8 +620,18 @@ def _watch(root: Path, args) -> int:
     clock = {"last_event": None, "last_run": None}
 
     if not args.daemon:
-        banner.show(animate=False)
-    _print(f"vigilando {root} · {spec.label}")
+        banner.show(
+            animate=False,
+            model=config.llm.roles.writer,
+            project=config.project_name(root),
+        )
+    info_panel(
+        f"[{SECONDARY}]vigilando:[/] {root}\n"
+        f"[{SECONDARY}]cadencia:[/] {spec.label}\n"
+        f"[{SECONDARY}]modo:[/] {'daemon' if args.daemon else 'interactivo'}",
+        title="Watcher activo",
+        border=SUCCESS,
+    )
 
     def job() -> None:
         try:

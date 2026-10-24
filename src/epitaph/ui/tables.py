@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from .theme import DEEP, PRIMARY, SECONDARY, SUCCESS, console, use_rich
+from .components import tip
+from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 
 def models_table(models: list[dict], active: str = "", hardware=None) -> None:
@@ -35,8 +36,8 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     from ..llm.hardware import estimate_ram_gb, estimate_tokens_per_second, viable
 
     table = Table(
-        title="Modelos locales (Ollama)",
-        border_style=DEEP,
+        title=f"[bold {PRIMARY}]Modelos locales · Ollama[/bold {PRIMARY}]",
+        border_style=PRIMARY,
         header_style=f"bold {PRIMARY}",
         expand=True,
     )
@@ -72,7 +73,7 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
         )
 
     console().print(table)
-    print("* estimación para este equipo; usa `epitaph bench` para medir.")
+    tip("estimación para este equipo; usa `epitaph bench` para medir")
 
 
 def facts_panel(facts: dict) -> None:
@@ -100,4 +101,10 @@ def facts_panel(facts: dict) -> None:
         f"[{SECONDARY}]huérfanos:[/] {len(facts.get('orphans', []))} · "
         f"[{SECONDARY}]secretos:[/] {len(facts.get('secrets', []))}"
     )
-    console().print(Panel(body, border_style=DEEP, title="análisis"))
+    console().print(
+        Panel(
+            body,
+            border_style=PRIMARY,
+            title=f"[bold {PRIMARY}]Análisis del proyecto[/bold {PRIMARY}]",
+        )
+    )

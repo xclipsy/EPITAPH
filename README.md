@@ -1,7 +1,7 @@
 # EPITAPH — Documentación viva, local y no destructiva
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B%20%7C%203.14-blue.svg?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-95%2F95%20Passing-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-98%2F98%20Passing-brightgreen.svg?logo=pytest&logoColor=white)](tests/)
 [![Local-first](https://img.shields.io/badge/Local--first-Ollama%20%2F%20llama.cpp-98D979.svg)](https://ollama.com)
 [![License](https://img.shields.io/badge/License-MIT-F23078.svg)](LICENSE)
 
@@ -66,10 +66,10 @@ Dentro del chat puedes actualizar, revisar el diff, cambiar la cadencia o expres
 preferencias en lenguaje natural:
 
 ```text
-/update --dry
-/models
-/every 10m
-> prefiero el árbol al final y sin badges
+epitaph › /update --dry
+epitaph › /models
+epitaph › /every 10m
+epitaph › prefiero el árbol al final y sin badges
 ```
 
 ### 5. Sin modelo local
@@ -161,6 +161,22 @@ salida `3`. Los comandos deterministas y `--no-llm` siguen funcionando.
   modularidad, código muerto, tooling y documentación.
 - Las preferencias del usuario filtran y ordenan el informe sin ocultar categorías críticas.
 
+### 7. Interfaz de terminal estructurada
+
+La TUI sigue el lenguaje visual de PRAXIA CLI, con la paleta propia de EPITAPH
+(`#F23078`, `#8C0B47`, `#ADA4BF`, `#98D979`, `#0D0D0D`):
+
+- **Banner en panel** con el arte ASCII, el tagline y el modelo activo.
+- **Panel de sesión** con proyecto, modelo, cadencia y hardware.
+- **`/help` como tabla** de comando, propósito y ejemplo, con un tip al pie.
+- **Entrada enmarcada** por reglas horizontales y prompt `epitaph ›`, con autocompletado
+  de comandos slash e historial.
+- **Respuestas en Markdown** dentro de un panel titulado `EPITAPH (modelo · local)`, con
+  spinner y streaming de tokens cuando el terminal lo permite.
+- **Salidas estructuradas** para `/status`, `/diff`, `/permissions`, `/prefs`,
+  `/structure`, `/config`, `/doctor`, `requirements`, `suggestions`, `bench` y `undo`.
+- **Degradación elegante**: sin TTY, sin color o sin `rich`, la salida vuelve a texto plano.
+
 ---
 
 ## Arquitectura
@@ -237,7 +253,7 @@ EPITAPH/
 │   ├── pipeline.py         # Análisis → prosa → merge → escritura segura
 │   └── cli.py              # Comandos de terminal
 │
-├── tests/                  # 95 tests deterministas (sin Ollama ni red)
+├── tests/                  # 98 tests deterministas (sin Ollama ni red)
 ├── documentation/
 │   ├── EPITAPH_DOCUMENTO_TECNICO.md
 │   └── adr/                # ADR-0001 … ADR-0011
@@ -385,8 +401,8 @@ uv run ruff check .
 ```
 
 ```text
-95 tests collected
-95 passed
+98 tests collected
+98 passed
 All checks passed!
 ```
 

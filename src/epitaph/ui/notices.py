@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..llm.health import OllamaHealth
-from .theme import DEEP, PRIMARY, SECONDARY, SUCCESS, console, use_rich
+from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 
 def ollama_notice(
@@ -120,8 +120,8 @@ def doctor_table(rows: list[tuple[str, str, str]]) -> None:
     from rich.table import Table
 
     table = Table(
-        title="Diagnóstico de EPITAPH",
-        border_style=DEEP,
+        title=f"[bold {PRIMARY}]Diagnóstico de EPITAPH[/bold {PRIMARY}]",
+        border_style=PRIMARY,
         header_style=f"bold {PRIMARY}",
         expand=False,
     )
