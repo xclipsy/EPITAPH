@@ -45,10 +45,11 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     table.add_column("Params", style=SECONDARY, justify="right")
     table.add_column("Quant", style=SECONDARY, justify="right")
     table.add_column("Disco", style=SECONDARY, justify="right")
-    table.add_column("RAM req.", style=SECONDARY, justify="right")
+    table.add_column("RAM", style=SECONDARY, justify="right")
     table.add_column("tok/s*", style=SECONDARY, justify="right")
-    table.add_column("Estado", justify="center")
+    table.add_column("Estado", justify="center", no_wrap=True)
 
+    blocked: list[tuple[str, str]] = []
     for model in models:
         name = model.get("name", "?")
         details = model.get("details", {}) or {}
@@ -59,7 +60,8 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
         if name == active:
             status = f"[bold {SUCCESS}]ACTIVO[/bold {SUCCESS}]"
         elif not ok:
-            status = f"[{SECONDARY}]{reason}[/{SECONDARY}]"
+            status = f"[bold {PRIMARY}]NO VIABLE[/bold {PRIMARY}]"
+            blocked.append((name, reason))
         else:
             status = f"[{SECONDARY}]disponible[/{SECONDARY}]"
         table.add_row(
@@ -73,6 +75,9 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
         )
 
     console().print(table)
+    if blocked:
+        details = "; ".join(f"{name} ({reason})" for name, reason in blocked)
+        tip(f"no viables en este equipo: {details}")
     tip("estimación para este equipo; usa `epitaph bench` para medir")
 
 

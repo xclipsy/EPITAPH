@@ -139,8 +139,8 @@ class ChatSession:
         body = (
             f"[bold {PRIMARY}]Documentación viva, local y no destructiva[/bold {PRIMARY}]\n"
             f"[{SECONDARY}]proyecto:[/] {self.config.project_name(self.root)} · "
-            f"[{SECONDARY}]modelo:[/] [bold white]{models}[/bold white] · "
             f"[{SECONDARY}]cadencia:[/] {self.config.trigger.default}\n"
+            f"[{SECONDARY}]modelo:[/] [bold white]{models}[/bold white]\n"
             f"[{SECONDARY}]hardware:[/] {hw.system} {hw.machine} · "
             f"{hw.cpu_count} hilos · {hw.ram_total_gb:.1f} GB · "
             f"{hw.gpu or 'CPU'}\n\n"
