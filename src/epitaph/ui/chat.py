@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import difflib
+import re
 import sys
+import time
 from pathlib import Path
 
 from .. import __version__, pipeline, requirements, safety, suggestions
@@ -29,29 +31,38 @@ from ..scheduler.trigger import parse_spec
 from ..state import State
 from . import banner
 from .components import (
+    SlashCommandAutoSuggest,
     answer_panel,
     answer_renderable,
+    build_rich_tree,
     catalog_table,
     diff_panel,
+    display_metrics_table,
     error_panel,
     info_panel,
     kv_panel,
-    rule,
+    resolve_file,
     syntax_panel,
     tip,
+    view_file_in_terminal,
 )
 from .notices import doctor_table, ollama_hint, ollama_notice
-from .tables import facts_panel, models_table
+from .tables import models_table
 from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 COMMANDS = (
     "/help",
     "/status",
+    "/tree",
+    "/view",
+    "/metrics",
     "/update",
     "/diff",
     "/undo",
     "/suggestions",
     "/requirements",
+    "/cycles",
+    "/secrets",
     "/models",
     "/model",
     "/every",
@@ -67,24 +78,29 @@ COMMANDS = (
 )
 
 HELP_ROWS = [
-    ("/help", "Muestra esta guía y los atajos", "/help o ayuda"),
-    ("/status", "Estado del proyecto y del planificador", "/status"),
-    ("/update [--dry]", "Analiza y actualiza el README", "/update --dry"),
-    ("/diff", "Diff pendiente del último análisis", "/diff"),
+    ("/help", "Muestra esta guía y los atajos interactivos", "/help o ayuda"),
+    ("/status", "Panel general de estado y planificador", "/status"),
+    ("/tree", "Muestra el árbol jerárquico de carpetas y archivos", "/tree o arbol"),
+    ("/view <archivo>", "Inspecciona código con resaltado y líneas", "/view cli.py 1 50 o /view 1"),
+    ("/metrics", "Panel de métricas estáticas de calidad y salud", "/metrics o metricas"),
+    ("/update [--dry]", "Analiza el proyecto y actualiza el README", "/update --dry"),
+    ("/diff", "Diff pendiente del último análisis del README", "/diff"),
     ("/undo", "Restaura el último backup del README", "/undo"),
-    ("/suggestions", "Genera el informe de sugerencias", "/suggestions"),
+    ("/suggestions", "Genera el informe de sugerencias (suggestions.md)", "/suggestions"),
     ("/requirements", "Analiza dependencias y propone cambios", "/requirements"),
-    ("/models", "Lista los modelos locales de Ollama", "/models"),
-    ("/model <nombre>", "Fija el modelo global", "/model qwen2.5-coder:3b"),
-    ("/every <cadencia>", "Cambia la cadencia de actualización", "/every interval:10"),
+    ("/cycles", "Detecta dependencias circulares en los módulos", "/cycles o ciclos"),
+    ("/secrets", "Escanea credenciales y tokens expuestos", "/secrets o secretos"),
+    ("/models", "Lista modelos locales de Ollama con specs y estado", "/models o modelos"),
+    ("/model <nombre>", "Fija el modelo global de trabajo", "/model qwen2.5-coder:3b"),
+    ("/every <cadencia>", "Cambia la cadencia de sincronización", "/every on_autosave o interval:5"),
     ("/pause · /resume", "Pausa o reanuda los runs automáticos", "/pause"),
     ("/prefs [add|rm|clear]", "Gestiona preferencias del README", "/prefs add tono informal"),
-    ("/structure [reset]", "Muestra o restablece la estructura", "/structure reset"),
-    ("/permissions", "Matriz de permisos de escritura", "/permissions"),
+    ("/structure [reset]", "Muestra o restablece la estructura del README", "/structure reset"),
+    ("/permissions", "Matriz de permisos de lectura y escritura", "/permissions"),
     ("/config", "Configuración efectiva del proyecto", "/config"),
-    ("/doctor", "Diagnóstico del entorno y de Ollama", "/doctor"),
-    ("/clear", "Limpia la pantalla", "/clear"),
-    ("/exit", "Cierra la sesión", "/exit o salir"),
+    ("/doctor", "Diagnóstico del entorno y servicio Ollama", "/doctor"),
+    ("/clear", "Limpia la pantalla de la terminal", "/clear"),
+    ("/exit", "Finaliza la sesión interactiva", "/exit o salir"),
 ]
 
 
@@ -100,6 +116,7 @@ class ChatSession:
             max_items=config.preferences.max_directives,
         )
         self.last_update = None
+        self.citation_shortcuts: dict[str, dict] = {}
 
     # ------------------------------------------------------------------ loop
 
@@ -136,104 +153,144 @@ class ChatSession:
         model = self.config.llm.roles.writer
         chat_model = self.config.llm.roles.chat
         models = model if chat_model == model else f"{model} · chat: {chat_model}"
-        body = (
-            f"[bold {PRIMARY}]Documentación viva, local y no destructiva[/bold {PRIMARY}]\n"
-            f"[{SECONDARY}]proyecto:[/] {self.config.project_name(self.root)} · "
-            f"[{SECONDARY}]cadencia:[/] {self.config.trigger.default}\n"
-            f"[{SECONDARY}]modelo:[/] [bold white]{models}[/bold white]\n"
-            f"[{SECONDARY}]hardware:[/] {hw.system} {hw.machine} · "
-            f"{hw.cpu_count} hilos · {hw.ram_total_gb:.1f} GB · "
-            f"{hw.gpu or 'CPU'}\n\n"
-            "[white]Analizo el repositorio y mantengo el README sincronizado con el código.[/white]\n"
-            f"[{SECONDARY}]Escribe [bold white]/help[/bold white] para ver los comandos, "
-            "o formula una preferencia en lenguaje natural.[/]"
+        hw_profile = (
+            f"CPU ({min(hw.cpu_count, 8)} hilos) · {hw.ram_total_gb:.1f} GB RAM · "
+            f"{hw.gpu or '100% Local'}"
         )
-        info_panel(
-            body,
-            title=f"EPITAPH · {model} · local",
-            border=PRIMARY,
+
+        from rich.panel import Panel
+
+        body = (
+            f"[bold {PRIMARY}]EPITAPH DeepDoc Explorer (Terminal Edition)[/bold {PRIMARY}]\n"
+            f"[dim]Motor activo: [bold white]{models}[/bold white] · num_ctx: {self.config.llm.params.num_ctx} · {hw_profile}[/dim]\n\n"
+            f"[white]Documentación viva, sincronización reactiva de README y auditoría arquitectónica con Ollama.[/white]\n"
+            f"[{SECONDARY}]Proyecto:[/] [bold white]{self.config.project_name(self.root)}[/bold white] [{SECONDARY}]({self.root.name})[/] · "
+            f"[{SECONDARY}]Cadencia:[/] [bold white]{self.config.trigger.default}[/bold white]\n\n"
+            f"[{SECONDARY}]Escribe [bold white]/help[/bold white] para ver el catálogo de 22 comandos (/tree, /view, /status, /update, /models, /cycles, /secrets...).\n"
+            f"Escribe el número de una cita ([bold white]1[/bold white], [bold white]2[/bold white]...), el nombre de un archivo o una preferencia en lenguaje natural.[/]"
+        )
+        console().print(
+            Panel(
+                body,
+                border_style=PRIMARY,
+            )
         )
         tip(
-            "prueba «prefiero el árbol al final y sin badges» o "
-            "«¿qué hace este proyecto?»"
+            "puedes escribir directamente el nombre de un archivo (ej: [bold white]cli.py[/bold white]) o formular «prefiero el árbol al final y sin badges»"
         )
 
     def _read(self) -> str | None:
         if not sys.stdin.isatty():
             line = sys.stdin.readline()
             return line if line else None
+        con = console()
+        line_bar = "─" * (con.width or 80)
         try:
             from prompt_toolkit import PromptSession
-            from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
             from prompt_toolkit.completion import WordCompleter
             from prompt_toolkit.history import InMemoryHistory
             from prompt_toolkit.styles import Style
 
             if not hasattr(self, "_pt"):
+                pt_completer = WordCompleter(list(COMMANDS), ignore_case=True, match_middle=False)
+                pt_suggester = (
+                    SlashCommandAutoSuggest(list(COMMANDS))
+                    if SlashCommandAutoSuggest
+                    else None
+                )
                 self._pt = PromptSession(
-                    completer=WordCompleter(COMMANDS, ignore_case=True, match_middle=False),
-                    auto_suggest=AutoSuggestFromHistory(),
+                    completer=pt_completer,
+                    auto_suggest=pt_suggester,
                     complete_while_typing=True,
                     history=InMemoryHistory(),
                     style=Style.from_dict(
                         {
                             "prompt": f"{PRIMARY} bold",
+                            "auto-suggestion": f"{SECONDARY} italic",
                             "completion-menu.completion": f"bg:#1a1a1a {SECONDARY}",
                             "completion-menu.completion.current": f"bg:{PRIMARY} #0D0D0D",
                         }
                     ),
                 )
-            rule()
+            sys.stdout.write(f"\033[38;2;242;48;120m{line_bar}\033[0m\n")
             line = self._pt.prompt([("class:prompt", "epitaph › ")])
-            rule()
+            sys.stdout.write(f"\033[38;2;242;48;120m{line_bar}\033[0m\n")
+            sys.stdout.flush()
             return line
         except ImportError:
-            return input("epitaph › ")
+            sys.stdout.write(f"\033[38;2;242;48;120m{line_bar}\033[0m\n")
+            line = input("epitaph › ")
+            sys.stdout.write(f"\033[38;2;242;48;120m{line_bar}\033[0m\n")
+            sys.stdout.flush()
+            return line
 
     # -------------------------------------------------------------- dispatch
 
     def handle(self, line: str) -> bool:
         command, _, argument = line.partition(" ")
-        command = command.lower()
+        cmd_lower = command.lower()
         argument = argument.strip()
 
-        if command in ("/exit", "/quit", "salir", "exit"):
-            self._print(f"[{SECONDARY}]Sesión cerrada.[/]")
+        if cmd_lower in ("/exit", "/quit", "salir", "exit", "quit"):
+            self._print("[yellow]Saliendo de EPITAPH Terminal.[/yellow]")
             return False
-        if command in ("/help", "?", "ayuda", "help"):
+        if cmd_lower in ("/help", "?", "ayuda", "help"):
             self._help()
             return True
-        if command == "/clear":
+        if cmd_lower == "/clear":
             print("\033[2J\033[H", end="")
             return True
-        if command == "/status":
+        if cmd_lower in ("/status", "/metricas", "/metrics", "metricas"):
             self._status()
             return True
-        if command == "/update":
+        if cmd_lower in ("/tree", "arbol", "/arbol"):
+            self._tree()
+            return True
+        if cmd_lower in ("/cycles", "/ciclos", "ciclos"):
+            self._cycles()
+            return True
+        if cmd_lower in ("/secrets", "/secretos", "secretos"):
+            self._secrets()
+            return True
+        if cmd_lower.startswith("/view") or cmd_lower in ("ver", "/ver"):
+            self._view(argument)
+            return True
+
+        # Atajos numéricos de citas interactivas estilo Praxia
+        if cmd_lower in self.citation_shortcuts:
+            sc = self.citation_shortcuts[cmd_lower]
+            view_file_in_terminal(
+                sc["file"],
+                highlight_range=(sc["line"], sc["end_line"]),
+                repo_root=self.root,
+            )
+            return True
+
+        if cmd_lower == "/update":
             self._update(dry_run="--dry" in argument)
             return True
-        if command == "/diff":
+        if cmd_lower == "/diff":
             self._diff()
             return True
-        if command == "/undo":
+        if cmd_lower == "/undo":
             self._undo()
             return True
-        if command == "/suggestions":
+        if cmd_lower == "/suggestions":
             self._suggestions()
             return True
-        if command == "/requirements":
+        if cmd_lower == "/requirements":
             self._requirements()
             return True
-        if command == "/models":
+        if cmd_lower in ("/models", "/modelos", "models", "modelos"):
             self._models()
             return True
-        if command == "/model":
+        if cmd_lower == "/model":
             self._model(argument)
             return True
-        if command == "/every":
+        if cmd_lower == "/every":
             self._every(argument)
             return True
-        if command == "/pause":
+        if cmd_lower == "/pause":
             self.state.paused = True
             self.state.save(self.root)
             info_panel(
@@ -243,7 +300,7 @@ class ChatSession:
             )
             tip("usa /resume para reanudarlos")
             return True
-        if command == "/resume":
+        if cmd_lower == "/resume":
             self.state.paused = False
             self.state.save(self.root)
             info_panel(
@@ -252,24 +309,150 @@ class ChatSession:
                 border=SUCCESS,
             )
             return True
-        if command == "/prefs":
+        if cmd_lower == "/prefs":
             self._prefs(argument)
             return True
-        if command == "/structure":
+        if cmd_lower == "/structure":
             self._structure(argument)
             return True
-        if command == "/permissions":
+        if cmd_lower == "/permissions":
             self._permissions()
             return True
-        if command == "/config":
+        if cmd_lower == "/config":
             self._config()
             return True
-        if command == "/doctor":
+        if cmd_lower == "/doctor":
             self._doctor()
+            return True
+
+        # Acceso directo a archivos si el usuario teclea un nombre existente (ej: cli.py)
+        cand = resolve_file(self.root, line.strip())
+        if cand and cand.is_file():
+            view_file_in_terminal(cand, repo_root=self.root)
             return True
 
         # lenguaje natural
         return self._natural(line)
+
+    def _tree(self) -> None:
+        from rich.tree import Tree
+
+        root_tree = Tree(f"[bold {PRIMARY}][pkg] {self.root.name}[/bold {PRIMARY}]")
+        build_rich_tree(self.root, root_tree)
+        console().print(root_tree)
+
+    def _view(self, argument: str) -> None:
+        if not argument:
+            tip("uso: /view <archivo> [inicio] [fin] o teclea el número de una cita")
+            return
+        parts = argument.split()
+        target = parts[0]
+        if target in self.citation_shortcuts:
+            sc = self.citation_shortcuts[target]
+            view_file_in_terminal(
+                sc["file"],
+                highlight_range=(sc["line"], sc["end_line"]),
+                repo_root=self.root,
+            )
+            return
+
+        h_range = None
+        if ":" in target:
+            target_file, _, range_str = target.partition(":")
+            if "-" in range_str:
+                s_str, _, e_str = range_str.partition("-")
+                try:
+                    h_range = (int(s_str), int(e_str))
+                except ValueError:
+                    pass
+            else:
+                try:
+                    s_int = int(range_str)
+                    h_range = (s_int, s_int + 25)
+                except ValueError:
+                    pass
+            target = target_file
+        elif len(parts) >= 3:
+            try:
+                h_range = (int(parts[1]), int(parts[2]))
+            except ValueError:
+                pass
+        elif len(parts) == 2:
+            try:
+                s_int = int(parts[1])
+                h_range = (s_int, s_int + 25)
+            except ValueError:
+                pass
+
+        resolved = resolve_file(self.root, target)
+        if resolved is None:
+            error_panel(
+                f"Archivo no localizado: '{target}'",
+                "comprueba que el archivo exista en la carpeta de trabajo",
+            )
+            return
+        view_file_in_terminal(resolved, highlight_range=h_range, repo_root=self.root)
+
+    def _cycles(self) -> None:
+        facts = analyze(self.root)
+        cycles = facts.get("cycles", [])
+        console().print(
+            f"\n[bold {PRIMARY}]Análisis de Dependencias Circulares (Tarjan SCC):[/bold {PRIMARY}] [bold]{self.root.name}[/bold]"
+        )
+        if not cycles:
+            console().print(
+                f"[bold {SUCCESS}]No se detectaron dependencias circulares. El grafo de módulos es un Acíclico Dirigido (DAG) saludable.[/bold {SUCCESS}]"
+            )
+            tip("el código cumple con el principio de dependencias acíclicas (ADP)")
+            return
+
+        from rich.table import Table
+
+        c_table = Table(
+            title=f"[bold {PRIMARY}]Alerta: {len(cycles)} Ciclos de Importación Detectados[/bold {PRIMARY}]",
+            border_style=PRIMARY,
+        )
+        c_table.add_column("#", style="bold white", width=4)
+        c_table.add_column("Longitud", style=SECONDARY, justify="right")
+        c_table.add_column("Módulos Involucrados en el Ciclo", style="bold white")
+        for idx, cycle in enumerate(cycles, 1):
+            cycle_str = " -> ".join(cycle)
+            c_table.add_row(str(idx), str(len(cycle)), cycle_str)
+        console().print(c_table)
+        tip("desacopla las dependencias circulares usando inversión de dependencias o interfaces")
+
+    def _secrets(self) -> None:
+        facts = analyze(self.root)
+        secrets = facts.get("secrets", [])
+        console().print(
+            f"\n[bold {PRIMARY}]Escaneo de Credenciales y Secretos Expuestos:[/bold {PRIMARY}] [bold]{self.root.name}[/bold]"
+        )
+        if not secrets:
+            console().print(
+                f"[bold {SUCCESS}]No se detectaron credenciales ni tokens expuestos en el código fuente.[/bold {SUCCESS}]"
+            )
+            tip("el enmascarador mantiene los secretos redactados antes del envío al modelo")
+            return
+
+        from rich.table import Table
+
+        s_table = Table(
+            title=f"[bold {PRIMARY}]Alerta: {len(secrets)} Secretos Detectados[/bold {PRIMARY}]",
+            border_style=PRIMARY,
+        )
+        s_table.add_column("#", style="bold white", width=4)
+        s_table.add_column("Archivo", style=f"bold {PRIMARY}")
+        s_table.add_column("Tipo", style="bold white")
+        s_table.add_column("Muestra Redactada", style=SECONDARY)
+        for idx, sec in enumerate(secrets, 1):
+            s_table.add_row(
+                str(idx),
+                str(sec.get("file", "?")),
+                str(sec.get("type", "Token/Key")),
+                str(sec.get("sample", "****")),
+            )
+        console().print(s_table)
+        tip("elimina tokens reales del repositorio y almacénalos en variables de entorno")
 
     # ------------------------------------------------------------- commands
 
@@ -287,7 +470,7 @@ class ChatSession:
 
     def _status(self) -> None:
         facts = analyze(self.root)
-        facts_panel(facts)
+        display_metrics_table(facts, self.root)
         kv_panel(
             "Planificador y preferencias",
             [
@@ -502,13 +685,13 @@ class ChatSession:
             kv_panel(
                 "Cadencia activa",
                 [("spec", self.config.trigger.default)],
-                footer="valores: on_save · interval:5 · idle:10 · manual",
+                footer="valores: on_autosave · on_save · interval:5 · idle:10 · manual",
             )
             return
         try:
             spec = parse_spec(value)
         except ValueError as exc:
-            error_panel(str(exc), "usa on_save, interval:N, idle:N o manual")
+            error_panel(str(exc), "usa on_autosave, on_save, interval:N, idle:N o manual")
             return
         self.config.trigger.default = spec.as_string()
         self.config.save(self.root)
@@ -700,10 +883,13 @@ class ChatSession:
             facts = analyze(self.root)
             models = installed_names(self.provider.list_models())
             model = resolve_model("chat", self.config, models)
+            t_start = time.perf_counter()
             answer = self._stream_answer(
                 model,
                 build_question_messages(line, facts),
             )
+            elapsed = time.perf_counter() - t_start
+
             if not answer.strip():
                 info_panel(
                     "El modelo no devolvió texto.",
@@ -711,11 +897,84 @@ class ChatSession:
                     border=SECONDARY,
                 )
                 tip("prueba con otro modelo: /models y /model <nombre>")
+                return True
+
+            # 1. Temporizador de respuesta estilo Praxia CLI
+            timer_str = f"Inferencia completada en {elapsed:.2f}s · {model}"
+            console().print(f"[dim]Temporizador: [bold {PRIMARY}]{timer_str}[/bold {PRIMARY}][/dim]\n")
+
+            # 2. Extracción y presentación de citas interactivas estilo Praxia
+            self._render_interactive_citations(answer)
+
             return True
         except EpitaphError as exc:
             error_panel(exc.message, exc.hint)
             tip("usa /help o formula una preferencia concreta")
         return True
+
+    def _render_interactive_citations(self, answer: str) -> None:
+        cite_pattern = re.compile(
+            r"\[?([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,6}):(\d+)(?:-(\d+))?\]?"
+        )
+        raw_cites = cite_pattern.findall(answer)
+        if not raw_cites:
+            return
+
+        dedup_cites = []
+        seen = set()
+        for f_m, s_m, e_m in raw_cites:
+            if f_m.lower().startswith(("http", "https", "ftp", "file")):
+                continue
+            s_int = int(s_m)
+            e_int = int(e_m) if e_m else (s_int + 20)
+            key = (f_m.lower(), s_int)
+            if key not in seen:
+                seen.add(key)
+                dedup_cites.append((f_m, s_int, e_int))
+
+        if not dedup_cites:
+            return
+
+        from rich.panel import Panel
+        from rich.text import Text
+
+        self.citation_shortcuts.clear()
+        cite_entries = []
+        for idx, (f_name, s_line, e_line) in enumerate(dedup_cites, start=1):
+            resolved_p = resolve_file(self.root, f_name)
+            if resolved_p:
+                rel_display = str(resolved_p.relative_to(self.root)).replace("\\", "/")
+                abs_p = resolved_p.resolve()
+            else:
+                rel_display = f_name
+                abs_p = (self.root / f_name).resolve()
+
+            self.citation_shortcuts[str(idx)] = {
+                "file": resolved_p or abs_p,
+                "line": s_line,
+                "end_line": e_line,
+            }
+
+            file_uri = f"file://{abs_p}"
+            entry = Text()
+            entry.append(f"  [{idx}] ", style=f"bold {PRIMARY}")
+            entry.append(f"{rel_display} ", style=f"bold white link {file_uri}")
+            entry.append(f"(Líneas {s_line} - {e_line})\n", style=SECONDARY)
+            entry.append("       -> Acción: escribe ", style="dim")
+            entry.append(f"{idx}", style="bold white")
+            entry.append(" o ", style="dim")
+            entry.append(f"/view {idx}", style=f"bold {PRIMARY}")
+            cite_entries.append(entry)
+
+        c_panel = Panel(
+            Text("\n\n").join(cite_entries),
+            title=f"[bold {PRIMARY}]Citas de Código Interactivo en esta Respuesta[/bold {PRIMARY}]",
+            border_style=PRIMARY,
+        )
+        console().print(c_panel)
+        tip(
+            "Escribe el número del atajo (ej. [bold white]1[/bold white], [bold white]2[/bold white]...) o [bold white]/view <archivo>[/bold white] para saltar al código directo."
+        )
 
     def _stream_answer(self, model: str, messages: list[dict]) -> str:
         options = {

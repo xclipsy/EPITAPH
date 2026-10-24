@@ -102,3 +102,43 @@ def test_local_model_role_change_does_not_need_ollama(
 
     assert code == 0
     assert Config.load(sample_repo).llm.roles.writer == "qwen2.5-coder:1.5b"
+
+
+def test_init_creates_configuration_and_state(tmp_path: Path, capsys) -> None:
+    code = cli.main(["-C", str(tmp_path), "init"])
+    assert code == 0
+
+    config = Config.load(tmp_path)
+    assert config.project.name == tmp_path.name
+    assert (tmp_path / ".epitaph" / "config.toml").exists()
+    assert (tmp_path / ".epitaph" / "state.json").exists()
+    output = capsys.readouterr().out
+    assert "Configuración completada" in output
+
+
+def test_init_wizard_autosave_option(tmp_path: Path, monkeypatch) -> None:
+    from epitaph.ui import wizard
+
+    # Entradas para _ask: opción 1 (directorio actual), nombre de proyecto, opción 1 (on_autosave), modelo, permisos
+    inputs = iter(["1", "MiProyecto", "1", "qwen2.5-coder:3b", "1"])
+    monkeypatch.setattr(wizard, "_ask", lambda prompt, default, non_int: next(inputs, default))
+    monkeypatch.setattr(wizard, "_yes", lambda prompt, default, non_int: True)
+
+    res = wizard.run(tmp_path, non_interactive=False)
+    assert res.root == tmp_path
+    assert res.config.trigger.default == "on_autosave"
+    assert res.config.project.name == "MiProyecto"
+
+
+def test_init_wizard_custom_workspace_option(tmp_path: Path, monkeypatch) -> None:
+    from epitaph.ui import wizard
+
+    custom_dir = tmp_path / "custom_proj"
+    inputs = iter(["2", str(custom_dir), "MiCustom", "2", "qwen2.5-coder:3b", "1"])
+    monkeypatch.setattr(wizard, "_ask", lambda prompt, default, non_int: next(inputs, default))
+    monkeypatch.setattr(wizard, "_yes", lambda prompt, default, non_int: True)
+
+    res = wizard.run(tmp_path, non_interactive=False)
+    assert res.root == custom_dir.resolve()
+    assert res.config.trigger.default == "on_save"
+    assert (custom_dir / ".epitaph" / "config.toml").exists()

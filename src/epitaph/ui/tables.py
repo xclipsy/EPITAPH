@@ -82,34 +82,6 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
 
 
 def facts_panel(facts: dict) -> None:
-    totals = facts.get("totals", {})
-    languages = ", ".join(item["name"] for item in facts.get("languages", [])[:4]) or "—"
-    if not use_rich():
-        print(
-            f"{facts.get('name')}: {totals.get('files', 0)} archivos, "
-            f"{totals.get('loc', 0)} LOC, {languages}"
-        )
-        return
+    from .components import display_metrics_table
 
-    from rich.panel import Panel
-
-    body = (
-        f"[bold {PRIMARY}]{facts.get('name', 'proyecto')}[/bold {PRIMARY}]\n"
-        f"[{SECONDARY}]archivos:[/] {totals.get('files', 0)} · "
-        f"[{SECONDARY}]LOC:[/] {totals.get('loc', 0)} · "
-        f"[{SECONDARY}]funciones:[/] {totals.get('functions', 0)} · "
-        f"[{SECONDARY}]clases:[/] {totals.get('classes', 0)}\n"
-        f"[{SECONDARY}]lenguajes:[/] {languages}\n"
-        f"[{SECONDARY}]mantenibilidad media:[/] {totals.get('avg_maintainability', 0)}/100 · "
-        f"[{SECONDARY}]complejidad media:[/] {totals.get('avg_cyclomatic', 0)}\n"
-        f"[{SECONDARY}]ciclos:[/] {len(facts.get('cycles', []))} · "
-        f"[{SECONDARY}]huérfanos:[/] {len(facts.get('orphans', []))} · "
-        f"[{SECONDARY}]secretos:[/] {len(facts.get('secrets', []))}"
-    )
-    console().print(
-        Panel(
-            body,
-            border_style=PRIMARY,
-            title=f"[bold {PRIMARY}]Análisis del proyecto[/bold {PRIMARY}]",
-        )
-    )
+    display_metrics_table(facts)

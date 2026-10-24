@@ -16,6 +16,7 @@ MIN_INTERVAL_MINUTES = 1
 
 
 class TriggerMode(StrEnum):
+    ON_AUTOSAVE = "on_autosave"
     ON_SAVE = "on_save"
     INTERVAL = "interval"
     IDLE = "idle"
@@ -33,6 +34,8 @@ class TriggerSpec:
             return f"cada {self.minutes} min"
         if self.mode is TriggerMode.IDLE:
             return f"inactivo {self.minutes} min"
+        if self.mode is TriggerMode.ON_AUTOSAVE:
+            return "por cada autosave"
         if self.mode is TriggerMode.ON_SAVE:
             return "por guardado"
         return "manual"
@@ -44,9 +47,11 @@ class TriggerSpec:
 
 
 def parse_spec(raw: str) -> TriggerSpec:
-    """Convierte 'interval:5', 'idle:10', 'on_save', 'manual' en TriggerSpec."""
+    """Convierte 'interval:5', 'idle:10', 'on_save', 'on_autosave', 'manual' en TriggerSpec."""
     value = (raw or "").strip().lower()
-    if value in ("on_save", "save", "guardado"):
+    if value in ("on_autosave", "autosave", "auto_save", "guardado_automatico", "auto"):
+        return TriggerSpec(TriggerMode.ON_AUTOSAVE)
+    if value in ("on_save", "save", "guardado", "guardado_manual"):
         return TriggerSpec(TriggerMode.ON_SAVE)
     if value in ("manual", "off", "nunca"):
         return TriggerSpec(TriggerMode.MANUAL)
@@ -79,7 +84,7 @@ def parse_spec(raw: str) -> TriggerSpec:
             return TriggerSpec(mode, minutes)
 
     raise ValueError(
-        f"cadencia desconocida: {raw!r} (usa on_save, manual, interval:N o idle:N)"
+        f"cadencia desconocida: {raw!r} (usa on_autosave, on_save, manual, interval:N o idle:N)"
     )
 
 
@@ -91,6 +96,7 @@ class Trigger:
       - nunca en pausa,
       - nunca sin cambios pendientes (gate semántico externo),
       - respeta cooldown y ventana de debounce,
+      - on_autosave se comporta con debounce rápido y cooldown acotado,
       - on_save se comporta como intervalo ~0 con cooldown.
     """
 
@@ -110,6 +116,13 @@ class Trigger:
             return None
         if last_event is None:
             return None
+
+        if self.spec.mode is TriggerMode.ON_AUTOSAVE:
+            debounce = min(self.debounce_seconds, 2.0)
+            base = last_event + debounce
+            if last_run is not None:
+                base = max(base, last_run + min(self.cooldown_seconds, 10.0))
+            return base
 
         base = last_event + self.debounce_seconds
         if last_run is not None:

@@ -127,12 +127,11 @@ def main(argv: list[str] | None = None) -> int:
             config = Config.load_or_default(root)
             from .ui.wizard import run as wizard_run
 
-            wizard_run(root, config)
-            state = State.load(root)
-            state.wizard_completed = True
-            state.save(root)
+            res = wizard_run(root, config)
+            root, config = res.root, res.config
             info_panel(
-                "Configuración inicial completada.\n"
+                f"Configuración completada para [bold white]{root}[/bold white].\n"
+                f"[{SECONDARY}]cadencia:[/] [bold white]{config.trigger.default}[/bold white]\n"
                 f"[{SECONDARY}]siguiente paso:[/] [bold {SUCCESS}]epitaph[/bold {SUCCESS}]",
                 title="EPITAPH listo",
                 border=SUCCESS,

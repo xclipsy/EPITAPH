@@ -12,6 +12,21 @@ def test_parse_on_save() -> None:
     assert spec.label == "por guardado"
 
 
+def test_parse_on_autosave() -> None:
+    for alias in ("on_autosave", "autosave", "auto_save", "guardado_automatico"):
+        spec = parse_spec(alias)
+        assert spec.mode is TriggerMode.ON_AUTOSAVE
+        assert spec.as_string() == "on_autosave"
+        assert spec.label == "por cada autosave"
+
+
+def test_on_autosave_respects_fast_debounce() -> None:
+    trigger = Trigger(parse_spec("on_autosave"), debounce_seconds=4, cooldown_seconds=30)
+    # Debounce is capped to 2s for autosave
+    assert trigger.next_due(last_event=0.0, last_run=None, now=0.0) == 2.0
+    assert trigger.next_due(last_event=100.0, last_run=95.0, now=100.0) == 105.0
+
+
 def test_parse_manual_and_aliases() -> None:
     assert parse_spec("manual").mode is TriggerMode.MANUAL
     assert parse_spec("off").mode is TriggerMode.MANUAL
