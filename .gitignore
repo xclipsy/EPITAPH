@@ -1,0 +1,28 @@
+# Entornos y artefactos
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# EPITAPH
+.epitaph/cache.db
+.epitaph/lock
+.epitaph/audit.log
+.epitaph/backups/
+suggestions.md
+requirements.suggested.txt
+README.suggested.md
+
+# Sistema
+.DS_Store
+.idea/
+.vscode/
+*.log
