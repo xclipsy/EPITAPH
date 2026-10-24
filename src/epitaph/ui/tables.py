@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
-from .theme import DEEP, PRIMARY, SECONDARY, SUCCESS, console, use_rich
+from .components import tip
+from .theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 
 def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     if not models:
-        print("No hay modelos instalados. Usa `epitaph models pull qwen2.5-coder:3b`.")
+        if use_rich():
+            from rich.panel import Panel
+
+            console().print(
+                Panel(
+                    f"[{SECONDARY}]No hay modelos instalados en Ollama.[/{SECONDARY}]\n"
+                    f"[bold {SUCCESS}]epitaph models pull qwen2.5-coder:3b[/bold {SUCCESS}]",
+                    title=f"[bold {PRIMARY}]SIN MODELOS LOCALES[/bold {PRIMARY}]",
+                    border_style=PRIMARY,
+                    expand=False,
+                )
+            )
+        else:
+            print("No hay modelos instalados. Usa `epitaph models pull qwen2.5-coder:3b`.")
         return
     if not use_rich():
         for model in models:
@@ -22,8 +36,8 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     from ..llm.hardware import estimate_ram_gb, estimate_tokens_per_second, viable
 
     table = Table(
-        title="Modelos locales (Ollama)",
-        border_style=DEEP,
+        title=f"[bold {PRIMARY}]Modelos locales · Ollama[/bold {PRIMARY}]",
+        border_style=PRIMARY,
         header_style=f"bold {PRIMARY}",
         expand=True,
     )
@@ -31,10 +45,11 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
     table.add_column("Params", style=SECONDARY, justify="right")
     table.add_column("Quant", style=SECONDARY, justify="right")
     table.add_column("Disco", style=SECONDARY, justify="right")
-    table.add_column("RAM req.", style=SECONDARY, justify="right")
+    table.add_column("RAM", style=SECONDARY, justify="right")
     table.add_column("tok/s*", style=SECONDARY, justify="right")
-    table.add_column("Estado", justify="center")
+    table.add_column("Estado", justify="center", no_wrap=True)
 
+    blocked: list[tuple[str, str]] = []
     for model in models:
         name = model.get("name", "?")
         details = model.get("details", {}) or {}
@@ -45,7 +60,8 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
         if name == active:
             status = f"[bold {SUCCESS}]ACTIVO[/bold {SUCCESS}]"
         elif not ok:
-            status = f"[{SECONDARY}]{reason}[/{SECONDARY}]"
+            status = f"[bold {PRIMARY}]NO VIABLE[/bold {PRIMARY}]"
+            blocked.append((name, reason))
         else:
             status = f"[{SECONDARY}]disponible[/{SECONDARY}]"
         table.add_row(
@@ -59,7 +75,10 @@ def models_table(models: list[dict], active: str = "", hardware=None) -> None:
         )
 
     console().print(table)
-    print("* estimación para este equipo; usa `epitaph bench` para medir.")
+    if blocked:
+        details = "; ".join(f"{name} ({reason})" for name, reason in blocked)
+        tip(f"no viables en este equipo: {details}")
+    tip("estimación para este equipo; usa `epitaph bench` para medir")
 
 
 def facts_panel(facts: dict) -> None:
@@ -87,4 +106,10 @@ def facts_panel(facts: dict) -> None:
         f"[{SECONDARY}]huérfanos:[/] {len(facts.get('orphans', []))} · "
         f"[{SECONDARY}]secretos:[/] {len(facts.get('secrets', []))}"
     )
-    console().print(Panel(body, border_style=DEEP, title="análisis"))
+    console().print(
+        Panel(
+            body,
+            border_style=PRIMARY,
+            title=f"[bold {PRIMARY}]Análisis del proyecto[/bold {PRIMARY}]",
+        )
+    )

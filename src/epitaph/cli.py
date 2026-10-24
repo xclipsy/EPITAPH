@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__, pipeline, requirements, safety, suggestions
 from .analyzers import analyze
 from .config import Config
-from .errors import EpitaphError
+from .errors import EpitaphError, LLMUnavailable
 from .llm.hardware import (
     detect as detect_hardware,
 )
@@ -20,6 +20,7 @@ from .llm.hardware import (
     estimate_tokens_per_second,
     viable,
 )
+from .llm.health import probe
 from .llm.provider_ollama import OllamaProvider
 from .llm.roles import installed_names
 from .preferences import PreferenceStore, build, detect, resolve, validate
@@ -29,8 +30,16 @@ from .scheduler.watcher import Watcher
 from .scheduler.worker import Worker
 from .state import State
 from .ui import banner
+from .ui.components import (
+    catalog_table,
+    diff_panel,
+    info_panel,
+    kv_panel,
+    tip,
+)
+from .ui.notices import doctor_table, ollama_notice
 from .ui.tables import facts_panel, models_table
-from .ui.theme import SECONDARY, SUCCESS, console, use_rich
+from .ui.theme import PRIMARY, SECONDARY, SUCCESS, console, use_rich
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command in (None, "chat"):
             config = _require_config(root)
+            if (code := _ensure_llm(config, command="epitaph")) is not None:
+                return code
             state = State.load(root)
             from .ui.chat import ChatSession
 
@@ -120,7 +131,12 @@ def main(argv: list[str] | None = None) -> int:
             state = State.load(root)
             state.wizard_completed = True
             state.save(root)
-            _print("Listo. Ejecuta `epitaph` para abrir el chat.")
+            info_panel(
+                "Configuración inicial completada.\n"
+                f"[{SECONDARY}]siguiente paso:[/] [bold {SUCCESS}]epitaph[/bold {SUCCESS}]",
+                title="EPITAPH listo",
+                border=SUCCESS,
+            )
             return 0
 
         if args.command == "analyze":
@@ -133,6 +149,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command in ("update", "docs"):
             config = _require_config(root)
+            if (
+                code := _ensure_llm(
+                    config,
+                    command=f"epitaph {args.command}",
+                    no_llm=args.no_llm,
+                )
+            ) is not None:
+                return code
             state = State.load(root)
             provider = None if args.no_llm else OllamaProvider(config.llm.base_url)
             result = pipeline.update(
@@ -168,10 +192,17 @@ def main(argv: list[str] | None = None) -> int:
             facts = analyze(root)
             result = requirements.analyze(root, facts, config)
             diff = requirements.render_diff(root, config, result)
-            _print(diff or "Sin diferencias: las dependencias declaradas coinciden.")
+            if diff:
+                diff_panel("requirements.txt · propuesta", diff)
+            else:
+                info_panel(
+                    "Las dependencias declaradas coinciden.",
+                    title="requirements.txt",
+                    border=SUCCESS,
+                )
             if not args.audit and result["missing"]:
                 target = requirements.write_suggested(root, config, result)
-                _print(f"Propuesta escrita en {target}")
+                tip(f"propuesta escrita en {target}")
             return 0
 
         if args.command == "suggestions":
@@ -184,9 +215,17 @@ def main(argv: list[str] | None = None) -> int:
             path, selected, hidden_prefs, hidden_status = suggestions.write_report(
                 root, config, items, effective
             )
-            _print(f"{len(selected)} sugerencias en {path}")
-            if hidden_prefs or hidden_status:
-                _print(f"ocultas: {hidden_prefs} por preferencias, {hidden_status} descartadas")
+            kv_panel(
+                "Sugerencias generadas",
+                [
+                    ("archivo", str(path)),
+                    ("incluidas", str(len(selected))),
+                    ("ocultas por preferencias", str(hidden_prefs)),
+                    ("descartadas antes", str(hidden_status)),
+                ],
+                border=SUCCESS,
+                footer=f"revisa {path.name} antes de aplicarlo",
+            )
             return 0
 
         if args.command == "prefs":
@@ -228,6 +267,29 @@ def _require_config(root: Path) -> Config:
     return Config.load(root)
 
 
+def _ensure_llm(
+    config: Config,
+    *,
+    command: str,
+    no_llm: bool = False,
+    require_models: bool = True,
+    deterministic: str | None = "epitaph update --no-llm",
+) -> int | None:
+    """Bloquea comandos que necesitan Ollama si el servicio no está listo."""
+    if no_llm:
+        return None
+    health = probe(OllamaProvider(config.llm.base_url))
+    if health.reachable and (health.models or not require_models):
+        return None
+    ollama_notice(
+        health,
+        command=command,
+        model=config.llm.roles.writer,
+        deterministic=deterministic,
+    )
+    return LLMUnavailable.exit_code
+
+
 def _print(text: str) -> None:
     if use_rich():
         console().print(text)
@@ -236,16 +298,35 @@ def _print(text: str) -> None:
 
 
 def _render_update(result) -> None:
-    if result.merge and result.merge.changes:
-        for change in result.merge.changes:
-            _print(f"  · {change}")
-    if result.skipped_reason:
-        _print(f"[{SECONDARY}]{result.skipped_reason}[/]")
+    changes = result.merge.changes if result.merge else []
     if result.written:
-        _print(f"[{SUCCESS}]✔ README actualizado[/] ({result.duration_ms} ms)")
+        state = f"[bold {SUCCESS}]README actualizado[/bold {SUCCESS}]"
+    elif result.skipped_reason:
+        state = f"[{SECONDARY}]{result.skipped_reason}[/]"
+    else:
+        state = f"[{SECONDARY}]sin cambios[/]"
+
+    body = [
+        f"[{SECONDARY}]estado:[/] {state}",
+        f"[{SECONDARY}]secciones:[/] {len(changes)} · "
+        f"[{SECONDARY}]duraci\u00f3n:[/] {result.duration_ms} ms · "
+        f"[{SECONDARY}]tokens:[/] {result.tokens_in} in / {result.tokens_out} out",
+    ]
+    if changes:
+        body.append("")
+        body.extend(f"[{SUCCESS}]·[/] {change}" for change in changes)
     if result.merge and result.merge.errors:
-        for error in result.merge.errors:
-            _print(f"marcador: {error}")
+        body.append("")
+        body.extend(f"[{PRIMARY}]marcador:[/] {error}" for error in result.merge.errors)
+
+    info_panel(
+        "\n".join(body),
+        title="Actualización · README.md",
+        border=SUCCESS if result.written else PRIMARY,
+    )
+    if result.merge and result.merge.notes:
+        for note in result.merge.notes:
+            tip(note)
 
 
 def _prefs(root: Path, args) -> int:
@@ -255,43 +336,68 @@ def _prefs(root: Path, args) -> int:
     if args.action == "add" and args.value:
         proposal = build(args.value, detect(args.value).scope_hint, config, len(store.items))
         if proposal is None:
-            _print("No pude convertir eso en una preferencia concreta.")
+            info_panel(
+                "No pude convertir eso en una preferencia concreta.",
+                title="Preferencias",
+                border=PRIMARY,
+            )
             return 1
         ok, error = validate(proposal, config)
         if not ok:
-            _print(f"No se puede aplicar: {error}")
+            info_panel(f"No se puede aplicar: {error}", title="Preferencias", border=PRIMARY)
             return 1
-        _print(f"propuesta: {proposal.scope} = {proposal.value}")
+        kv_panel(
+            "Propuesta de preferencia",
+            [
+                ("ámbito", proposal.scope),
+                ("valor", str(proposal.value)),
+                ("motivo", proposal.reason or "—"),
+            ],
+        )
         if not args.yes:
-            _print("Añade --yes para guardarla.")
+            tip("añade --yes para guardarla")
             return 0
         preference = store.add(proposal.scope, proposal.value, proposal.reason)
         safety.log(root, "preference:add", id=preference.id, scope=preference.scope)
-        _print(f"Guardada como {preference.id}.")
+        info_panel(
+            f"Guardada como [bold white]{preference.id}[/bold white].",
+            title="Preferencia guardada",
+            border=SUCCESS,
+        )
         return 0
 
     if args.action == "rm" and args.value:
         if store.remove(args.value):
-            _print(f"Eliminada {args.value}.")
+            info_panel(
+                f"Eliminada [bold white]{args.value}[/bold white].",
+                title="Preferencias",
+                border=SUCCESS,
+            )
             return 0
-        _print("No existe.")
+        info_panel("No existe.", title="Preferencias", border=PRIMARY)
         return 1
 
     if args.action == "clear":
         if not args.yes:
-            _print("Añade --yes para borrar todas las preferencias.")
+            tip("añade --yes para borrar todas las preferencias")
             return 0
         store.clear()
-        _print("Preferencias eliminadas.")
+        info_panel("Preferencias eliminadas.", title="Preferencias", border=SUCCESS)
         return 0
 
     if not store.items:
-        _print("No hay preferencias.")
+        info_panel("No hay preferencias.", title="Preferencias", border=SECONDARY)
         return 0
-    for preference in store.items:
-        _print(f"{preference.id}  {preference.scope} = {preference.value}  [{preference.origin}]")
-    _print("")
-    _print(directives_text(resolve(config, store.items)))
+    rows = [
+        (preference.id, preference.scope, str(preference.value)[:60], preference.origin)
+        for preference in store.items
+    ]
+    catalog_table("Preferencias guardadas", ["ID", "Ámbito", "Valor", "Origen"], rows)
+    info_panel(
+        directives_text(resolve(config, store.items)),
+        title="Directivas activas",
+        border=SECONDARY,
+    )
     return 0
 
 
@@ -303,11 +409,17 @@ def _structure(root: Path, args) -> int:
         store.save()
         config.readme.sections = list(Config.default().readme.sections)
         config.save(root)
-        _print("Estructura restablecida.")
+        info_panel(
+            "Estructura del README restablecida.",
+            title="Estructura",
+            border=SUCCESS,
+        )
         return 0
     effective = resolve(config, store.items)
-    for index, section in enumerate(effective.sections, start=1):
-        _print(f"{index}. {section}")
+    rows = [(str(index), section) for index, section in enumerate(effective.sections, 1)]
+    catalog_table("Estructura efectiva del README", ["#", "Sección"], rows)
+    if effective.sections != config.readme.sections:
+        tip("la estructura está modificada por preferencias; usa `epitaph structure reset`")
     return 0
 
 
@@ -315,6 +427,17 @@ def _models(root: Path, args) -> int:
     config = _require_config(root)
     provider = OllamaProvider(config.llm.base_url)
     hw = detect_hardware()
+
+    if args.action in ("list", "pull"):
+        if (
+            code := _ensure_llm(
+                config,
+                command=f"epitaph models {args.action}",
+                require_models=False,
+                deterministic=None,
+            )
+        ) is not None:
+            return code
 
     if args.action == "pull":
         if not args.value:
@@ -332,24 +455,42 @@ def _models(root: Path, args) -> int:
 
     if args.action == "use":
         if not args.value:
-            _print(f"Modelo actual: {config.llm.roles.writer}")
+            kv_panel(
+                "Modelo activo",
+                [("writer", config.llm.roles.writer)],
+                footer="usa `epitaph models use <modelo>` para fijar uno global",
+            )
             return 0
         for role in ("summarizer", "writer", "advisor", "chat"):
             setattr(config.llm.roles, role, args.value)
         config.save(root)
-        _print(f"Modelo global: {args.value}")
+        info_panel(
+            f"Todos los roles usan [bold white]{args.value}[/bold white].",
+            title="Modelo global",
+            border=SUCCESS,
+        )
         return 0
 
     if args.action == "role":
         if not args.value or not args.role:
-            _print("Uso: epitaph models role <rol> <modelo>")
+            info_panel(
+                "Uso: `epitaph models role <rol> <modelo>`",
+                title="Roles",
+                border=PRIMARY,
+            )
+            tip("roles disponibles: summarizer, writer, advisor, chat")
             return 1
         if not hasattr(config.llm.roles, args.value):
-            _print("Roles: summarizer, writer, advisor, chat")
+            info_panel("Rol desconocido.", title="Roles", border=PRIMARY)
+            tip("roles disponibles: summarizer, writer, advisor, chat")
             return 1
         setattr(config.llm.roles, args.value, args.role)
         config.save(root)
-        _print(f"{args.value} = {args.role}")
+        kv_panel(
+            "Rol actualizado",
+            [("rol", args.value), ("modelo", args.role)],
+            border=SUCCESS,
+        )
         return 0
 
     models = provider.list_models()
@@ -359,10 +500,9 @@ def _models(root: Path, args) -> int:
 
 def _bench(root: Path, args) -> int:
     config = _require_config(root)
+    if (code := _ensure_llm(config, command="epitaph bench", deterministic=None)) is not None:
+        return code
     provider = OllamaProvider(config.llm.base_url)
-    if not provider.is_available():
-        _print("Ollama no está disponible.")
-        return 3
     models = installed_names(provider.list_models())
     model = args.model or config.llm.roles.writer
     if model not in models:
@@ -382,11 +522,18 @@ def _bench(root: Path, args) -> int:
     elapsed = time.time() - started
     hw = detect_hardware()
     payload = next((item for item in provider.list_models() if item.get("name") == model), {})
-    _print(f"tiempo de respuesta: {elapsed:.2f} s")
-    _print(f"RAM estimada del modelo: {estimate_ram_gb(payload):.1f} GB")
-    _print(f"tok/s estimados: {estimate_tokens_per_second(payload, hw):.0f}")
     ok, reason = viable(payload, hw)
-    _print(f"viabilidad: {'sí' if ok else 'no'} ({reason})")
+    kv_panel(
+        "Benchmark local",
+        [
+            ("modelo", model),
+            ("respuesta", f"{elapsed:.2f} s"),
+            ("RAM estimada", f"{estimate_ram_gb(payload):.1f} GB"),
+            ("tok/s estimados", f"{estimate_tokens_per_second(payload, hw):.0f}"),
+            ("viable", f"{'sí' if ok else 'no'} ({reason})"),
+        ],
+        border=SUCCESS if ok else PRIMARY,
+    )
     return 0
 
 
@@ -395,21 +542,45 @@ def _doctor(root: Path) -> int:
 
     config = Config.load_or_default(root)
     hw = detect_hardware()
-    provider = OllamaProvider(config.llm.base_url)
-    _print(f"epitaph       {__version__}")
-    _print(f"python        {platform.python_version()}")
-    _print(f"sistema       {hw.system} {hw.machine} · {hw.cpu_count} hilos")
-    _print(f"memoria       {hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)")
-    _print(f"gpu           {hw.gpu or 'no detectada'}")
-    _print(f"ollama        {'conectado' if provider.is_available() else 'no disponible'}")
-    if provider.is_available():
-        try:
-            _print(f"modelos       {', '.join(installed_names(provider.list_models())) or 'ninguno'}")
-        except EpitaphError:
-            pass
+    health = probe(OllamaProvider(config.llm.base_url))
     clean, _ = safety.status(root)
-    _print(f"git           {'limpio' if clean else 'con cambios'}")
-    _print(f"config        {Config.path_for(root)}")
+
+    ok = f"[bold {SUCCESS}]OK[/bold {SUCCESS}]"
+    bad = f"[bold {PRIMARY}]NO DISPONIBLE[/bold {PRIMARY}]"
+    rows = [
+        ("epitaph", ok, __version__),
+        ("python", ok, platform.python_version()),
+        ("sistema", ok, f"{hw.system} {hw.machine} · {hw.cpu_count} hilos"),
+        ("memoria", ok, f"{hw.ram_total_gb:.1f} GB ({hw.ram_available_gb:.1f} libres)"),
+        (
+            "gpu",
+            f"[bold {SUCCESS}]DETECTADA[/bold {SUCCESS}]"
+            if hw.gpu
+            else f"[{SECONDARY}]SIN GPU[/{SECONDARY}]",
+            hw.gpu or "inferencia en CPU",
+        ),
+        (
+            "ollama",
+            f"[bold {SUCCESS}]CONECTADO[/bold {SUCCESS}]" if health.reachable else bad,
+            health.base_url,
+        ),
+        (
+            "modelos",
+            f"[bold {SUCCESS}]{len(health.models)}[/bold {SUCCESS}]"
+            if health.models
+            else f"[bold {PRIMARY}]NINGUNO[/bold {PRIMARY}]",
+            ", ".join(health.models) or f"ollama pull {config.llm.roles.writer}",
+        ),
+        (
+            "git",
+            f"[bold {SUCCESS}]LIMPIO[/bold {SUCCESS}]"
+            if clean
+            else f"[bold {PRIMARY}]CON CAMBIOS[/bold {PRIMARY}]",
+            "árbol de trabajo",
+        ),
+        ("config", ok, str(Config.path_for(root))),
+    ]
+    doctor_table(rows)
     return 0
 
 
@@ -417,21 +588,27 @@ def _undo(root: Path, args) -> int:
     config = Config.load_or_default(root)
     backups = safety.list_backups(root, Path(config.readme.path).name)
     if not backups:
-        _print("No hay backups.")
+        info_panel("No hay backups.", title="Undo", border=SECONDARY)
         return 1
     if args.list:
-        for backup in backups:
-            _print(str(backup))
+        rows = [(str(index), backup.name) for index, backup in enumerate(backups, 1)]
+        catalog_table("Backups disponibles", ["#", "Archivo"], rows)
         return 0
     latest = backups[0]
     safety.restore(latest, root / config.readme.path)
     safety.log(root, "undo:readme", backup=str(latest))
-    _print(f"Restaurado desde {latest}")
+    info_panel(
+        f"README restaurado desde [bold white]{latest}[/bold white].",
+        title="Undo completado",
+        border=SUCCESS,
+    )
     return 0
 
 
 def _watch(root: Path, args) -> int:
     config = _require_config(root)
+    if (code := _ensure_llm(config, command="epitaph watch")) is not None:
+        return code
     state = State.load(root)
     spec = parse_spec(config.trigger_for("readme"))
     trigger = Trigger(
@@ -443,8 +620,18 @@ def _watch(root: Path, args) -> int:
     clock = {"last_event": None, "last_run": None}
 
     if not args.daemon:
-        banner.show(animate=False)
-    _print(f"vigilando {root} · {spec.label}")
+        banner.show(
+            animate=False,
+            model=config.llm.roles.writer,
+            project=config.project_name(root),
+        )
+    info_panel(
+        f"[{SECONDARY}]vigilando:[/] {root}\n"
+        f"[{SECONDARY}]cadencia:[/] {spec.label}\n"
+        f"[{SECONDARY}]modo:[/] {'daemon' if args.daemon else 'interactivo'}",
+        title="Watcher activo",
+        border=SUCCESS,
+    )
 
     def job() -> None:
         try:

@@ -23,6 +23,21 @@ Todas las versiones relevantes de EPITAPH. Formato basado en
   vida.
 - Permisos, backups, `undo`, auditoría append-only y guarda de git limpio.
 - `doctor`, `bench`, `analyze`, `watch` y `--dry`.
+- Preflight de Ollama: los comandos que requieren modelo se bloquean con un
+  panel de diagnóstico si `ollama serve` no responde; `--no-llm` mantiene el
+  camino determinista.
+- Diagnóstico `doctor` en tabla estructurada.
+- Interfaz de terminal rediseñada con el lenguaje visual de PRAXIA CLI: banner en
+  panel, panel de sesión, `/help` como tabla, entrada enmarcada por reglas,
+  autocompletado de comandos slash, respuestas en Markdown con streaming y
+  salidas estructuradas para el resto de comandos.
+- Quick start end-to-end en el README.
+
+### Corregido
+
+- El guard de git ignora los artefactos propios (`.epitaph/`, `suggestions.md`,
+  `requirements.suggested.txt`, `README.suggested.md`), de modo que `init` no
+  bloquea el primer `update`.
 
 ## [0.1.0]
 

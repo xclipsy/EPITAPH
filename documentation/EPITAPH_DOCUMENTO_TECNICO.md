@@ -805,7 +805,7 @@ Test obligatorio: ejecutar dos veces sobre un repo sin cambios debe producir **c
 ### 12.5 Escritura segura
 
 1. Verificar permiso `write:readme`.
-2. Verificar `git status --porcelain` (salvo `--force-write`).
+2. Verificar `git status --porcelain` (salvo `--force-write`). Se excluyen los artefactos propios (`.epitaph/`, `suggestions.md`, `requirements.suggested.txt`, `README.suggested.md`): `init` los crea antes del primer `update` y la salida generada se regenera sola, así que no deben contar como árbol sucio.
 3. Copiar el original a `.epitaph/backups/README.<timestamp>.md`.
 4. Escribir en `.tmp` y renombrar.
 5. Registrar en `audit.log`.
@@ -1011,6 +1011,16 @@ Cadena: modelo del rol → modelo global → cualquier instalado compatible → 
 | `ollama` | v1 | Default, `/api/tags`, `/api/show`, `/api/pull`, `/api/chat` |
 | `llama_cpp` | v0.3 | Gramática GBNF, útil sin Ollama |
 | `openai_compatible` | Opcional | Solo si `base_url` es explícito; aviso de privacidad |
+
+### 14.9 Preflight y bloqueo
+
+Antes de ejecutar comandos que requieren modelo (`chat`, `update`, `docs`, `watch`, `bench`,
+`models list|pull`), EPITAPH consulta `/api/tags`. Si el servicio no responde o no hay
+modelos, muestra un panel estructurado con estado, endpoint, comando, modelo, causa y pasos
+(`ollama serve`, `ollama pull`, `epitaph doctor`), y sale con código `3`.
+
+No se bloquean `--no-llm`, `doctor`, `analyze`, `requirements`, `suggestions`, `prefs`,
+`structure`, `undo` ni los cambios locales de rol (`models use|role`).
 
 ---
 
@@ -1298,7 +1308,7 @@ Si el usuario fija un valor en `config.toml` y una preferencia del chat lo contr
 - **Contenido no confiable**: el código analizado nunca se interpreta como instrucciones.
 - **Secretos**: enmascarado previo a cualquier inferencia; `.env` excluido por defecto.
 - **Escritura atómica** y backups con timestamp.
-- **Árbol limpio** obligatorio antes de escribir (configurable).
+- **Árbol limpio** obligatorio antes de escribir (configurable), ignorando los artefactos propios de EPITAPH (`.epitaph/` y salidas generadas) para no bloquear el primer `update`.
 - **Auditoría** append-only con hash de entrada y salida.
 - **Sin ejecución** de nada generado por el modelo.
 - **Bloqueo de instancia** para evitar carreras.
@@ -1322,6 +1332,9 @@ Si el usuario fija un valor en `config.toml` y una preferencia del chat lo contr
 
 ## 19. Diseño visual de la TUI
 
+Referencia de lenguaje visual: la CLI de PRAXIA (`Panel`, `Table`, `Markdown`, `Live`,
+`Rule` y tips `-> Tip:`), reinterpretada con la paleta propia de EPITAPH.
+
 ### 19.1 Paleta
 
 | Rol | Hex | Uso |
@@ -1337,32 +1350,69 @@ Nota de accesibilidad: `#8C0B47` sobre `#0D0D0D` no alcanza contraste para texto
 ### 19.2 Banner
 
 ```
-███████╗██████╗ ██╗████████╗ █████╗ ██████╗ ██╗  ██╗
-██╔════╝██╔══██╗██║╚══██╔══╝██╔══██╗██╔══██╗██║  ██║
-█████╗  ██████╔╝██║   ██║   ███████║██████╔╝███████║
-██╔══╝  ██╔═══╝ ██║   ██║   ██╔══██║██╔═══╝ ██╔══██║
-███████╗██║     ██║   ██║   ██║  ██║██║     ██║  ██║
-╚══════╝╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝
-        documentación viva · inferencia local
+╭─────────────────────────────────────────────────────────────────────╮
+│  ███████╗██████╗ ██╗████████╗ █████╗ ██████╗ ██╗  ██╗               │
+│  ██╔════╝██╔══██╗██║╚══██╔══╝██╔══██╗██╔══██╗██║  ██║               │
+│  █████╗  ██████╔╝██║   ██║   ███████║██████╔╝███████║               │
+│  ██╔══╝  ██╔═══╝ ██║   ██║   ██╔══██║██╔═══╝ ██╔══██║               │
+│  ███████╗██║     ██║   ██║   ██║  ██║██║     ██║  ██║               │
+│  ╚══════╝╚═╝     ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝     ╚═╝  ╚═╝               │
+│                                                                     │
+│    documentación viva · inferencia local · no destructiva           │
+│                                                                     │
+│    api-service · 100% local · qwen2.5-coder:3b · sin telemetría     │
+╰─────────────────────────────────────────────────────────────────────╯
 ```
 
-Animación: barrido de degradado `#F23078 → #8C0B47` sobre el banner (≈600 ms), una sola vez por sesión. Sin bucles infinitos que consuman CPU.
+El arte se dibuja dentro de un `Panel` con borde `#F23078`. Animación: barrido de
+degradado `#F23078 → #8C0B47` sobre el banner (≈600 ms), una sola vez por sesión. Sin
+bucles infinitos que consuman CPU.
 
 ### 19.3 Layout
 
 ```
-┌─ EPITAPH ────────────── proyecto: api-service ──────────────┐
-│                                                             │
-│  ● analizando 3 archivos…                                   │
-│  ● overview generado (128 tokens)                           │
-│  ● diff listo: +14 / -3                                     │
-│                                                             │
-├─────────────────────────────────────────────────────────────┤
-│ > /diff                                                     │
-└─ qwen2.5-coder:3b · 12 tok/s · ⏱ 03:12 · 4 pendientes ──────┘
+╭──────────────────── EPITAPH · qwen2.5-coder:3b · local ────────────────────╮
+│ Documentación viva, local y no destructiva                                  │
+│ proyecto: api-service · modelo: qwen2.5-coder:3b · cadencia: interval:5     │
+│ hardware: Linux x86_64 · 8 hilos · 13.6 GB · CPU                            │
+│                                                                             │
+│ Analizo el repositorio y mantengo el README sincronizado con el código.     │
+│ Escribe /help para ver los comandos, o formula una preferencia.             │
+╰─────────────────────────────────────────────────────────────────────────────╯
+-> Tip: prueba «prefiero el árbol al final y sin badges» o «¿qué hace este proyecto?»
+
+────────────────────────────────────────────────────────────────────────────────
+epitaph › /help
+────────────────────────────────────────────────────────────────────────────────
+                         Catálogo de comandos · EPITAPH
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Comando           ┃ Propósito                     ┃ Sintaxis / ejemplo       ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ /help             │ Muestra esta guía y los       │ /help o ayuda            │
+│ /status           │ Estado del proyecto           │ /status                  │
+│ /update [--dry]   │ Analiza y actualiza el README │ /update --dry            │
+└───────────────────┴───────────────────────────────┴──────────────────────────┘
+-> Tip: también acepto lenguaje natural: «prefiero el árbol al final».
 ```
 
-### 19.4 Degradación
+Las respuestas del modelo se renderizan con `Panel(Markdown(...))` y título
+`EPITAPH (modelo · local)`. Mientras llegan los tokens se muestra un `Spinner` entre dos
+reglas horizontales; al terminar, el panel final queda persistente.
+
+### 19.4 Componentes y estructura de respuestas
+
+| Elemento | Componente | Uso |
+|---|---|---|
+| Banner e introducción | `Panel` | Identidad, proyecto, modelo, cadencia y hardware |
+| Catálogos | `Table` | `/help`, `/permissions`, `/prefs`, `/structure`, backups |
+| Pares clave/valor | `Panel` + `Table.grid` | `/status`, `/model`, `/doctor`, `bench`, propuestas |
+| Respuestas del modelo | `Panel(Markdown)` | Lenguaje natural con streaming |
+| Diffs y configuración | `Panel(Syntax)` | `/diff`, `/config`, `requirements` |
+| Errores | `Panel` | Fallo + causa + acción recomendada |
+| Entrada | `Rule` + `PromptSession` | Reglas horizontales, `epitaph ›`, autocompletado |
+| Sugerencias | texto `-> Tip:` | Siguiente paso tras tablas y paneles |
+
+### 19.5 Degradación
 
 | Situación | Comportamiento |
 |---|---|
@@ -1737,12 +1787,25 @@ flowchart TB
 
 ### 25.2 Mensajes
 
-Formato: `qué falló` + `por qué` + `qué hacer`.
+Formato: `qué falló` + `por qué` + `qué hacer`. En terminal, los errores de preflight se
+muestran como panel estructurado (estado, endpoint, comando, modelo, causa y pasos).
 
 ```
-✖ No se pudo conectar con Ollama en http://localhost:11434
-  Causa: conexión rechazada.
-  Acción: ejecuta `ollama serve` o configura [llm].base_url en .epitaph/config.toml
+╭─ ERROR · OLLAMA NO DISPONIBLE ─────────────────────────────╮
+│ estado    SERVIDOR NO DETECTADO                            │
+│ endpoint  http://localhost:11434                           │
+│ comando   epitaph update                                   │
+│ modelo    qwen2.5-coder:3b                                 │
+│ causa     no se pudo conectar con /api/tags                │
+│                                                            │
+│ Solución                                                   │
+│ 1. ollama serve                                            │
+│ 2. ollama pull qwen2.5-coder:3b                            │
+│ 3. epitaph doctor                                          │
+│                                                            │
+│ Alternativa determinista                                   │
+│   epitaph update --no-llm                                  │
+╰────────────────────────────────────────────────────────────╯
 ```
 
 ### 25.3 Logs

@@ -1,10 +1,11 @@
-"""Banner de EPITAPH con degradado y degradación elegante."""
+"""Banner de EPITAPH con degradado, panel y degradación elegante."""
 
 from __future__ import annotations
 
 import time
+from typing import Any
 
-from .theme import BACKGROUND, DEEP, PRIMARY, color_enabled
+from .theme import BACKGROUND, DEEP, PRIMARY, SECONDARY, color_enabled, console, use_rich
 
 ART = r"""
 ███████╗██████╗ ██╗████████╗ █████╗ ██████╗ ██╗  ██╗
@@ -30,36 +31,80 @@ def _blend(start: str, end: str, ratio: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(*mixed)
 
 
-def show(animate: bool | None = None, model: str = "", tier: str = "") -> None:
-    if not color_enabled():
+def _metadata(model: str, tier: str, project: str) -> str:
+    engine = "Ollama / llama.cpp"
+    if model:
+        engine = f"{model} [{tier}]" if tier else model
+    parts = ["100% local", engine, "sin telemetría"]
+    if project:
+        parts.insert(0, project)
+    return " · ".join(parts)
+
+
+def _body(count: int | None, *, model: str, tier: str, project: str) -> Any:
+    from rich.console import Group
+    from rich.text import Text
+
+    lines = ART if count is None else ART[:count]
+    art = Text()
+    for index, line in enumerate(lines):
+        ratio = index / max(len(ART) - 1, 1)
+        art.append(line, style=f"bold {_blend(PRIMARY, DEEP, ratio)}")
+        art.append("\n")
+
+    tagline = Text(f"  {TAGLINE}", style=SECONDARY)
+    parts: list[Any] = [art, tagline]
+
+    metadata = _metadata(model, tier, project)
+    if metadata:
+        parts.extend([Text(""), Text(f"  {metadata}", style=f"bold {SECONDARY}")])
+    return Group(*parts)
+
+
+def show(
+    animate: bool | None = None,
+    model: str = "",
+    tier: str = "",
+    project: str = "",
+) -> None:
+    if not color_enabled() or not use_rich():
         print("\n".join(ART))
         print(TAGLINE)
-        if model:
-            print(f"modelo: {model} ({tier})" if tier else f"modelo: {model}")
+        metadata = _metadata(model, tier, project)
+        if metadata:
+            print(metadata)
         return
 
-    try:
-        from rich.console import Console
-        from rich.text import Text
+    from rich.live import Live
+    from rich.panel import Panel
 
-        console = Console(highlight=False)
-        animate = animate if animate is not None else True
-        for index, line in enumerate(ART):
-            ratio = index / max(len(ART) - 1, 1)
-            text = Text(line, style=f"bold {_blend(PRIMARY, DEEP, ratio)}")
-            console.print(text)
-            if animate:
+    con = console()
+    animate = animate if animate is not None else True
+
+    if animate:
+        with Live(console=con, refresh_per_second=30, transient=True) as live:
+            for count in range(1, len(ART) + 1):
+                live.update(
+                    Panel(
+                        _body(count, model=model, tier=tier, project=project),
+                        border_style=PRIMARY,
+                        expand=False,
+                        padding=(0, 2),
+                    )
+                )
                 time.sleep(0.03)
-        console.print(Text(f"  {TAGLINE}", style=SECONDARY_COLOR))
-        if model:
-            suffix = f"{model} · {tier}" if tier else model
-            console.print(Text(f"  modelo: {suffix}", style=SECONDARY_COLOR))
-        console.print()
-    except ImportError:
-        print("\n".join(ART))
+
+    con.print(
+        Panel(
+            _body(None, model=model, tier=tier, project=project),
+            border_style=PRIMARY,
+            expand=False,
+            padding=(0, 2),
+        )
+    )
 
 
-SECONDARY_COLOR = "#ADA4BF"
+SECONDARY_COLOR = SECONDARY
 BACKGROUND_COLOR = BACKGROUND
 
 
