@@ -1,0 +1,86 @@
+[project]
+name = "EPITAPH"
+output_language = "es"
+ignore_file = ".epitaphignore"
+
+[trigger]
+default = "interval:5"
+
+[trigger.overrides]
+
+[trigger.safety]
+debounce_seconds = 4.0
+cooldown_seconds = 30.0
+only_if_changed = true
+max_run_seconds = 120
+skip_while_chatting = true
+idle_seconds = 60
+
+[features]
+readme = true
+requirements = true
+suggestions = true
+
+[readme]
+path = "README.md"
+preset = "estandar"
+sections = ["overview", "install", "usage", "structure", "architecture", "requirements", "development", "license"]
+max_sections = 12
+include_tree = true
+tree_depth = 3
+include_badges = false
+tone = "neutral"
+verbosity = "normal"
+
+[preferences]
+enabled = true
+path = ".epitaph/preferences.toml"
+confirm_from_chat = true
+max_directives = 20
+max_directive_chars = 240
+inherit_global = true
+
+[requirements]
+path = "requirements.txt"
+mode = "suggest"
+auto_apply = false
+
+[suggestions]
+path = "suggestions.md"
+max_items = 15
+include_llm = true
+
+[llm]
+backend = "ollama"
+base_url = "http://localhost:11434"
+auto_select = true
+
+[llm.roles]
+summarizer = "qwen2.5-coder:1.5b"
+writer = "qwen2.5-coder:3b"
+advisor = "qwen2.5-coder:3b"
+chat = "qwen2.5-coder:3b"
+
+[llm.params]
+num_ctx = 4096
+num_predict = 600
+num_thread = 7
+temperature = 0.2
+keep_alive = "30m"
+
+[permissions]
+write_readme = "ask"
+write_requirements = "deny"
+write_suggestions = "allow"
+write_code = "deny"
+network = false
+
+[safety]
+require_clean_git = true
+backup_retention = 20
+audit = true
+
+[ui]
+theme = "epitaph"
+animations = true
+stream = true
