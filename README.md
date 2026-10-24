@@ -41,7 +41,9 @@ El wizard elige funciones, cadencia, modelo y permisos:
 epitaph init
 ```
 
-Genera `.epitaph/config.toml` y `.epitaph/state.json`.
+Genera `.epitaph/config.toml` y `.epitaph/state.json`. Si eliges una carpeta de trabajo
+distinta, EPITAPH la recuerda como workspace activo para próximos comandos. También
+puedes cambiar de workspace con `/workspace <ruta>` o usar `-C <ruta>` en la CLI.
 
 ### 3. Primera actualización
 

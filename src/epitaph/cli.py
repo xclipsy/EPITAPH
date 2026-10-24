@@ -53,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-C",
         "--path",
         default=None,
-        help="ruta del proyecto (default: workspace activo o .)",
+        help="ruta del proyecto (default: workspace activo o directorio actual)",
     )
     parser.add_argument("--no-llm", action="store_true", help="no usar el modelo")
 

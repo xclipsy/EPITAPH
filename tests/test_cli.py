@@ -116,6 +116,56 @@ def test_init_creates_configuration_and_state(tmp_path: Path, capsys) -> None:
     assert "Configuración completada" in output
 
 
+def test_init_remembers_custom_workspace_for_default_commands(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from epitaph.ui import wizard
+
+    launch_dir = tmp_path / "launcher"
+    launch_dir.mkdir()
+    workspace = tmp_path / "AIR_DRAW_prueba"
+    monkeypatch.chdir(launch_dir)
+    global_file = tmp_path / "active_workspace.txt"
+    monkeypatch.setattr("epitaph.fs.get_global_workspace_file", lambda: global_file)
+    monkeypatch.setattr(OllamaProvider, "is_available", lambda self: False)
+    inputs = iter(["2", str(workspace), "8", "1"])
+    monkeypatch.setattr(wizard, "_ask", lambda prompt, default, non_int: next(inputs, default))
+    monkeypatch.setattr(wizard, "_yes", lambda prompt, default, non_int: True)
+
+    assert cli.main(["init"]) == 0
+    assert global_file.read_text(encoding="utf-8").strip() == str(
+        workspace.resolve()
+    )
+
+    loaded_configs: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "_ensure_llm",
+        lambda config, **kwargs: loaded_configs.append(config.project.name) or 3,
+    )
+    assert cli.main([]) == 3
+    assert loaded_configs == [workspace.name]
+    capsys.readouterr()
+
+    analyzed: list[Path] = []
+    monkeypatch.setattr(cli, "analyze", lambda root: analyzed.append(root) or {})
+    assert cli.main(["analyze", "--json"]) == 0
+    assert analyzed == [workspace.resolve()]
+
+
+def test_default_command_requests_init_when_project_is_not_configured(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("epitaph.fs.get_active_workspace", lambda: None)
+
+    assert cli.main([]) == 1
+
+    error = capsys.readouterr().out
+    assert "EPITAPH no está configurado" in error
+    assert "uv run epitaph init" in error
+
+
 def test_init_wizard_autosave_option(tmp_path: Path, monkeypatch) -> None:
     from epitaph.ui import wizard
 
@@ -230,5 +280,3 @@ def test_unconfigured_workspace_shows_error_message(tmp_path: Path, monkeypatch,
     captured = capsys.readouterr().out
     assert "EPITAPH no está configurado" in captured
     assert "uv run epitaph init" in captured
-
-
