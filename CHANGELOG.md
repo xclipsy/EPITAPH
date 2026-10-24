@@ -23,6 +23,13 @@ Todas las versiones relevantes de EPITAPH. Formato basado en
   vida.
 - Permisos, backups, `undo`, auditoría append-only y guarda de git limpio.
 - `doctor`, `bench`, `analyze`, `watch` y `--dry`.
+- Quick start end-to-end en el README.
+
+### Corregido
+
+- El guard de git ignora los artefactos propios (`.epitaph/`, `suggestions.md`,
+  `requirements.suggested.txt`, `README.suggested.md`), de modo que `init` no
+  bloquea el primer `update`.
 
 ## [0.1.0]
 

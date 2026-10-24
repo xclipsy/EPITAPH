@@ -11,6 +11,10 @@ from epitaph.errors import DirtyWorkTree, PermissionDenied
 from epitaph.state import State
 
 
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
 def _config(root: Path) -> Config:
     config = Config.default(root.name)
     config.permissions.write_readme = "allow"
@@ -92,6 +96,25 @@ def test_dirty_git_blocks_write(sample_repo: Path) -> None:
 
     with pytest.raises(DirtyWorkTree):
         pipeline.update(sample_repo, config, State(), use_llm=False)
+
+
+def test_init_artifacts_do_not_block_first_update(sample_repo: Path) -> None:
+    from epitaph.preferences import PreferenceStore
+
+    _git(sample_repo, "init")
+    _git(sample_repo, "config", "user.email", "test@example.com")
+    _git(sample_repo, "config", "user.name", "Test")
+    _git(sample_repo, "add", "-A")
+    _git(sample_repo, "commit", "-m", "base")
+
+    config = _config(sample_repo)
+    config.safety.require_clean_git = True
+    config.permissions.write_readme = "allow"
+    PreferenceStore.for_root(sample_repo).add("readme.tone", "directo")
+
+    result = pipeline.update(sample_repo, config, State(), use_llm=False)
+
+    assert result.written is True
 
 
 def test_force_bypasses_git_guard(sample_repo: Path) -> None:

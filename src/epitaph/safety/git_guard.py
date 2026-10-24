@@ -27,8 +27,31 @@ def is_repo(root: Path) -> bool:
         return False
 
 
+# Artefactos propios que no deben contar como "árbol sucio": el wizard crea
+# .epitaph/ antes del primer update y la salida generada se regenera sola.
+IGNORED_PREFIXES = (".epitaph/",)
+IGNORED_FILES = {
+    "suggestions.md",
+    "requirements.suggested.txt",
+    "README.suggested.md",
+}
+
+
+def _is_own_artifact(raw_path: str) -> bool:
+    path = raw_path.strip().strip('"')
+    if " -> " in path:  # renombrados en porcelain v1: "R  viejo -> nuevo"
+        path = path.split(" -> ")[-1].strip().strip('"')
+    return path.startswith(IGNORED_PREFIXES) or path in IGNORED_FILES
+
+
 def status(root: Path) -> tuple[bool, str]:
-    """Devuelve (árbol_limpio, salida_de_status)."""
+    """Devuelve (árbol_limpio, salida_de_status).
+
+    Se ignoran los artefactos que gestiona EPITAPH (`.epitaph/`,
+    `suggestions.md`, `requirements.suggested.txt`, `README.suggested.md`).
+    Así `init` no bloquea el primer `update` y la salida generada no impide
+    escribir el README.
+    """
     if not is_repo(root):
         return True, "no es un repositorio git"
     try:
@@ -41,8 +64,10 @@ def status(root: Path) -> tuple[bool, str]:
         )
     except (subprocess.SubprocessError, OSError):
         return True, "no se pudo ejecutar git status"
-    output = result.stdout.strip()
-    return output == "", output
+
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    dirty = [line for line in lines if not _is_own_artifact(line[3:])]
+    return not dirty, "\n".join(dirty)
 
 
 def diff(root: Path, path: str) -> str:

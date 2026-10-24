@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from epitaph import safety
 from epitaph.config import Config
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
 
 def test_permission_matrix_defaults() -> None:
@@ -71,3 +76,43 @@ def test_git_status_on_plain_directory(tmp_path: Path) -> None:
     clean, reason = safety.status(tmp_path)
     assert clean is True
     assert "git" in reason
+
+
+def test_git_status_ignores_epitaph_artifacts(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    (tmp_path / ".epitaph").mkdir()
+    (tmp_path / ".epitaph" / "state.toml").write_text("x\n", encoding="utf-8")
+    for name in ("suggestions.md", "requirements.suggested.txt", "README.suggested.md"):
+        (tmp_path / name).write_text("x\n", encoding="utf-8")
+
+    clean, reason = safety.status(tmp_path)
+
+    assert clean is True
+    assert reason == ""
+
+
+def test_git_status_detects_real_changes(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    (tmp_path / "app.py").write_text("x = 1\n", encoding="utf-8")
+
+    clean, reason = safety.status(tmp_path)
+
+    assert clean is False
+    assert "app.py" in reason
+
+
+def test_git_status_ignores_rename_into_artifacts(tmp_path: Path) -> None:
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    (tmp_path / "notas.md").write_text("x\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "base")
+
+    (tmp_path / "notas.md").rename(tmp_path / "suggestions.md")
+    _git(tmp_path, "add", "-A")
+
+    clean, reason = safety.status(tmp_path)
+
+    assert clean is True
+    assert reason == ""

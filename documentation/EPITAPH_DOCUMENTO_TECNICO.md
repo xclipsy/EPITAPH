@@ -805,7 +805,7 @@ Test obligatorio: ejecutar dos veces sobre un repo sin cambios debe producir **c
 ### 12.5 Escritura segura
 
 1. Verificar permiso `write:readme`.
-2. Verificar `git status --porcelain` (salvo `--force-write`).
+2. Verificar `git status --porcelain` (salvo `--force-write`). Se excluyen los artefactos propios (`.epitaph/`, `suggestions.md`, `requirements.suggested.txt`, `README.suggested.md`): `init` los crea antes del primer `update` y la salida generada se regenera sola, así que no deben contar como árbol sucio.
 3. Copiar el original a `.epitaph/backups/README.<timestamp>.md`.
 4. Escribir en `.tmp` y renombrar.
 5. Registrar en `audit.log`.
@@ -1298,7 +1298,7 @@ Si el usuario fija un valor en `config.toml` y una preferencia del chat lo contr
 - **Contenido no confiable**: el código analizado nunca se interpreta como instrucciones.
 - **Secretos**: enmascarado previo a cualquier inferencia; `.env` excluido por defecto.
 - **Escritura atómica** y backups con timestamp.
-- **Árbol limpio** obligatorio antes de escribir (configurable).
+- **Árbol limpio** obligatorio antes de escribir (configurable), ignorando los artefactos propios de EPITAPH (`.epitaph/` y salidas generadas) para no bloquear el primer `update`.
 - **Auditoría** append-only con hash de entrada y salida.
 - **Sin ejecución** de nada generado por el modelo.
 - **Bloqueo de instancia** para evitar carreras.
